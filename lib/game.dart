@@ -139,9 +139,11 @@ class RpgGame extends FlameGame with PanDetector {
        player.health = 100;
        player.position = Vector2.zero();
        world.children.whereType<Enemy>().forEach((e) => e.removeFromParent());
-       world.children.whereType<VisualEffects>().forEach((e) => e.removeFromParent()); // Removed VisualEffects just in case
-       // Note: VisualEffects are components but checking type might fail if generic.
-       // Better to just let them expire or explicit remove.
+       // Clear particles and trails
+       world.children.whereType<ParticleSystemComponent>().forEach((e) => e.removeFromParent());
+       // Note: _DashTrailComponent is private in visual_effects.dart, so we can't target it directly by type here easily
+       // unless we export it or use a base class.
+       // However, trails expire quickly (0.3s), so it's fine to leave them to fade out naturally.
        _spawnWave();
        return;
     }
