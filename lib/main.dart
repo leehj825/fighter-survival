@@ -175,7 +175,7 @@ class RpgGame extends FlameGame with PanDetector {
   }
 }
 
-class Player extends PositionComponent {
+class Player extends PositionComponent with HasGameRef<RpgGame> {
   // Movement
   Vector2? moveDirection;
   static const double _baseSpeed = 200.0;
@@ -218,6 +218,11 @@ class Player extends PositionComponent {
       // Move in the specific direction at constant speed
       position.add(moveDirection! * _baseSpeed * dt);
     }
+
+    // Keep within bounds
+    // Clamp center position to [width/2, screenWidth - width/2]
+    position.x = position.x.clamp(width / 2, gameRef.size.x - width / 2);
+    position.y = position.y.clamp(height / 2, gameRef.size.y - height / 2);
   }
 
   @override
@@ -329,7 +334,7 @@ class SwordEffect extends PositionComponent {
   }
 }
 
-class Enemy extends PositionComponent {
+class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   int health = 2;
   static const double _speed = 100.0;
   Vector2? _roamTarget;
@@ -374,18 +379,15 @@ class Enemy extends PositionComponent {
       }
     }
 
-    // Keep in bounds (optional, but good)
-    // Assuming simple screen bounds 0-width/height.
-    // We don't have reference to game size easily unless we check parent or store it.
-    // For prototype, let's just roam.
+    // Keep within bounds
+    position.x = position.x.clamp(width / 2, gameRef.size.x - width / 2);
+    position.y = position.y.clamp(height / 2, gameRef.size.y - height / 2);
   }
 
   void _pickNewTarget() {
     final Random rng = Random();
-    // Pick a point roughly within a standard screen size, or near current position
-    // Since we don't know exact screen size inside component easily without context,
-    // let's just move relative or assume a safe area (0-400).
-    // Better: Move relative to current pos to stay "roaming".
+    // Move relative to current pos to stay "roaming", but try to pick valid targets if possible.
+    // The clamp in update() will handle hard limits regardless.
     double dx = (rng.nextDouble() - 0.5) * 300;
     double dy = (rng.nextDouble() - 0.5) * 300;
     _roamTarget = position + Vector2(dx, dy);
