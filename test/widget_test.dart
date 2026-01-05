@@ -1,16 +1,17 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_rpg_prototype/main.dart'; // Ensure package name matches pubspec.yaml
+import 'package:flame/game.dart';
+import 'package:flutter_rpg_prototype/main.dart'; // Ensure this matches your package name in pubspec.yaml
 
 void main() {
-  testWidgets('Game app starts and renders', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const GameApp());
+  testWidgets('RpgGame starts and runs', (WidgetTester tester) async {
+    // Build the GameWidget with our RpgGame
+    final game = RpgGame();
+    await tester.pumpWidget(GameWidget(game: game));
 
-    // Verify that the GameScreen is present
-    expect(find.byType(GameScreen), findsOneWidget);
+    // Verify the GameWidget is present
+    expect(find.byType(GameWidget<RpgGame>), findsOneWidget);
 
-    // Verify that CustomPaint is present
-    expect(find.byType(CustomPaint), findsOneWidget);
+    // Allow the game loop to tick (Flame requires this)
+    await tester.pump();
   });
 }
