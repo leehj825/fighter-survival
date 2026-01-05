@@ -50,6 +50,9 @@ class RpgGame extends FlameGame with PanDetector {
     // Add Infinite Background (Grid)
     world.add(GridBackground());
 
+    // Spawn Obstacles (Rough background elements)
+    _spawnObstacles();
+
     // Setup Camera
     cameraComponent = CameraComponent(world: world);
     cameraComponent.viewfinder.anchor = Anchor.center;
@@ -62,6 +65,22 @@ class RpgGame extends FlameGame with PanDetector {
 
     // Initial Wave
     _spawnWave();
+  }
+
+  void _spawnObstacles() {
+    final Random rng = Random();
+    // Spawn 20 random obstacles near start
+    for (int i = 0; i < 20; i++) {
+      bool isBig = rng.nextBool();
+      Vector2 pos = Vector2(
+        (rng.nextDouble() - 0.5) * 2000,
+        (rng.nextDouble() - 0.5) * 2000,
+      );
+      // Don't spawn on top of player
+      if (pos.length > 200) {
+        world.add(Obstacle(radius: isBig ? 40 : 20, height: isBig ? 60 : 30)..position = pos);
+      }
+    }
   }
 
   void _spawnWave() {
@@ -114,22 +133,46 @@ class RpgGame extends FlameGame with PanDetector {
 
     // --- COLLISION LOGIC ---
     for (final child in world.children) {
+      // 1. Obstacle Collision
+      if (child is Obstacle) {
+        // Player vs Obstacle
+        double distP = player.position.distanceTo(child.position);
+        double radiusP = (player.size.x / 2) + child.radius;
+        if (distP < radiusP) {
+          Vector2 push = (player.position - child.position).normalized() * (radiusP - distP);
+          player.position += push;
+        }
+
+        // Enemy vs Obstacle
+        for (final other in world.children) {
+          if (other is Enemy) {
+             double distE = other.position.distanceTo(child.position);
+             double radiusE = (other.size.x / 2) + child.radius;
+             if (distE < radiusE) {
+               Vector2 push = (other.position - child.position).normalized() * (radiusE - distE);
+               other.position += push;
+             }
+          }
+        }
+      }
+
+      // 2. Combat
       if (child is Enemy) {
         final Enemy enemy = child;
         final double dist = player.position.distanceTo(enemy.position);
         final double combinedRadius = (player.size.x / 2) + (enemy.size.x / 2);
 
-        // 1. Check DASH Hit
+        // Check DASH Hit
         if (player.isDashing && dist < combinedRadius) {
            enemy.takeDamage(2); // Dash deals 2 damage, no knockback
         }
 
-        // 2. Check SLASH Hit
+        // Check SLASH Hit
         if (player.isSlashing && dist < (combinedRadius + 60)) {
            enemy.takeDamage(1, knockbackDir: enemy.position - player.position);
         }
 
-        // 3. Check PLAYER DAMAGE Hit
+        // Check PLAYER DAMAGE Hit
         if (!player.isDashing && dist < combinedRadius) {
           player.takeDamage(10);
         }
@@ -232,6 +275,43 @@ class RpgGame extends FlameGame with PanDetector {
   }
 }
 
+class Obstacle extends PositionComponent {
+  final double radius;
+  final double height;
+  final Paint _paint = Paint()..color = Colors.grey;
+
+  Obstacle({required this.radius, required this.height}) : super(anchor: Anchor.center, size: Vector2.all(radius * 2));
+
+  @override
+  void render(Canvas canvas) {
+    // 2.5D Cylinder Render
+    final Offset center = (size / 2).toOffset();
+    final double r = radius;
+    final double h = height;
+
+    // Shadow
+    canvas.drawOval(
+      Rect.fromCenter(center: center, width: width, height: width * 0.6),
+      Paint()..color = Colors.black.withOpacity(0.3)
+    );
+
+    // Body
+    final Offset topCenter = center + Offset(0, -h);
+    final Path bodyPath = Path();
+    bodyPath.moveTo(center.dx - r, center.dy);
+    bodyPath.lineTo(center.dx + r, center.dy);
+    bodyPath.lineTo(topCenter.dx + r, topCenter.dy);
+    bodyPath.lineTo(topCenter.dx - r, topCenter.dy);
+    bodyPath.close();
+    canvas.drawPath(bodyPath, Paint()..color = Colors.grey.shade700);
+
+    // Top
+    canvas.drawCircle(topCenter, r, Paint()..color = Colors.grey.shade400);
+    // Rim
+    canvas.drawCircle(topCenter, r, Paint()..style = PaintingStyle.stroke ..color = Colors.white.withOpacity(0.3));
+  }
+}
+
 class Player extends PositionComponent with HasGameRef<RpgGame> {
   Vector2? moveDirection;
   static const double _baseSpeed = 200.0;
@@ -303,12 +383,6 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     } else {
       // Cylinder Body (Darker)
       final Paint bodyPaint = Paint()..color = const Color(0xFF00AAAA); // Darker Cyan
-      final Rect bodyRect = Rect.fromLTRB(0, h, width, height); // Simplified rect logic
-      // Actually, standard cylinder logic:
-      // Side rect from (0, -h) to (width, 0) relative to center?
-      // Center is at size/2.
-      // Top circle center: (size.x/2, size.y/2 - h)
-      // Base circle center: (size.x/2, size.y/2)
 
       final Offset topCenter = center + Offset(0, -h);
 
@@ -446,13 +520,14 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
   void _pickNewTarget() {
     final Random rng = Random();
+    // Move towards player with some randomness to avoid stacking perfectly
     Vector2 playerPos = gameRef.player.position;
 
     double dx = (rng.nextDouble() - 0.5) * 200;
     double dy = (rng.nextDouble() - 0.5) * 200;
 
     _roamTarget = playerPos + Vector2(dx, dy);
-    _roamTimer = 1.0 + rng.nextDouble() * 2.0;
+    _roamTimer = 1.0 + rng.nextDouble() * 2.0; // Update target every 1-3 seconds
   }
 
   void takeDamage(int amount, {Vector2? knockbackDir}) {
