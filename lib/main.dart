@@ -37,6 +37,14 @@ class RpgGame extends FlameGame with PanDetector {
       ..anchor = Anchor.center;
 
     add(player);
+
+    // Spawn Enemies
+    final Random rng = Random();
+    for (int i = 0; i < 5; i++) {
+      add(Enemy()
+        ..position = size / 2 + Vector2((rng.nextDouble() - 0.5) * 500, (rng.nextDouble() - 0.5) * 500)
+      );
+    }
   }
 
   @override
@@ -48,6 +56,32 @@ class RpgGame extends FlameGame with PanDetector {
       _slashWindowTimer -= dt;
       if (_slashWindowTimer <= 0) {
         _accumulatedRotation = 0.0;
+      }
+    }
+
+    // --- COLLISION LOGIC ---
+    // Iterate over enemies to check for hits
+    // Note: In a larger game, use a spatial partition or collision system.
+    for (final child in children) {
+      if (child is Enemy) {
+        final Enemy enemy = child;
+        final double dist = player.position.distanceTo(enemy.position);
+        final double combinedRadius = (player.size.x / 2) + (enemy.size.x / 2);
+
+        // 1. Check DASH Hit
+        // Check overlap + player state
+        if (player.isDashing && dist < combinedRadius) {
+           // Knockback direction is player's dash direction (or velocity)
+           // We can approximate it by enemy - player
+           enemy.takeDamage(enemy.position - player.position);
+        }
+
+        // 2. Check SLASH Hit
+        // Slash has a larger range (sword length approx 60 + player radius 20 = 80)
+        // Check if player is slashing AND enemy is within range
+        if (player.isSlashing && dist < (combinedRadius + 60)) {
+           enemy.takeDamage(enemy.position - player.position);
+        }
       }
     }
   }
@@ -269,6 +303,17 @@ class SwordEffect extends PositionComponent {
     angle += (2 * pi / _duration) * dt;
 
     if (_lifeTime >= _duration) {
+      removeFromParent(); // Component is detached, but object might stick around in memory if referenced
+      // We rely on RpgGame to check 'isSlashing' via logic, but ideally we'd link this lifecycle
+      // to the player's 'isSlashing' flag.
+      // For now, Player sets isSlashing=false via timer or we do it here?
+      // Player logic doesn't explicitly unset 'isSlashing' based on this component yet,
+      // but let's assume Player handles the state.
+      // ACTUALLY: Player.isSlashing is just a flag.
+      // We should probably inform player when done, but for simple prototype it's fine.
+      if (parent is Player) {
+        (parent as Player).isSlashing = false;
+      }
       removeFromParent();
     }
   }
@@ -281,5 +326,94 @@ class SwordEffect extends PositionComponent {
 
     // Draw a white line
     canvas.drawLine(const Offset(20, 0), Offset(width + 20, 0), _whitePaint);
+  }
+}
+
+class Enemy extends PositionComponent {
+  int health = 2;
+  static const double _speed = 100.0;
+  Vector2? _roamTarget;
+  double _roamTimer = 0.0;
+  Vector2 _knockbackVelocity = Vector2.zero();
+  double _invulnerableTimer = 0.0;
+
+  final Paint _redPaint = Paint()..color = const Color(0xFFFF0000);
+
+  Enemy() : super(size: Vector2.all(40), anchor: Anchor.center);
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+
+    // Invulnerability Cooldown
+    if (_invulnerableTimer > 0) {
+      _invulnerableTimer -= dt;
+    }
+
+    // Knockback Physics (Decay)
+    if (_knockbackVelocity.length > 5) {
+      position.add(_knockbackVelocity * dt);
+      // Linear drag
+      _knockbackVelocity.scale(0.9);
+    } else {
+      _knockbackVelocity.setZero();
+
+      // Roaming Logic
+      _roamTimer -= dt;
+      if (_roamTimer <= 0 || _roamTarget == null) {
+        _pickNewTarget();
+      }
+
+      if (_roamTarget != null) {
+        final Vector2 dir = _roamTarget! - position;
+        if (dir.length < 5) {
+          _pickNewTarget();
+        } else {
+          position.add(dir.normalized() * _speed * dt);
+        }
+      }
+    }
+
+    // Keep in bounds (optional, but good)
+    // Assuming simple screen bounds 0-width/height.
+    // We don't have reference to game size easily unless we check parent or store it.
+    // For prototype, let's just roam.
+  }
+
+  void _pickNewTarget() {
+    final Random rng = Random();
+    // Pick a point roughly within a standard screen size, or near current position
+    // Since we don't know exact screen size inside component easily without context,
+    // let's just move relative or assume a safe area (0-400).
+    // Better: Move relative to current pos to stay "roaming".
+    double dx = (rng.nextDouble() - 0.5) * 300;
+    double dy = (rng.nextDouble() - 0.5) * 300;
+    _roamTarget = position + Vector2(dx, dy);
+    _roamTimer = 2.0 + rng.nextDouble() * 2.0; // 2-4 seconds
+  }
+
+  void takeDamage(Vector2 knockbackDir) {
+    if (_invulnerableTimer > 0) return;
+
+    health--;
+    // Apply knockback
+    _knockbackVelocity = knockbackDir.normalized() * 400.0;
+    _invulnerableTimer = 0.5; // 0.5s immunity
+
+    if (health <= 0) {
+      removeFromParent();
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    // Draw Red Circle
+    canvas.drawCircle((size / 2).toOffset(), width / 2, _redPaint);
+
+    // Flash white if hit recently
+    if (_invulnerableTimer > 0) {
+       final Paint flashPaint = Paint()..color = const Color(0x88FFFFFF);
+       canvas.drawCircle((size / 2).toOffset(), width / 2, flashPaint);
+    }
   }
 }
