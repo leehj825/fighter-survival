@@ -404,10 +404,14 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
   void _pickNewTarget() {
     final Random rng = Random();
-    double dx = (rng.nextDouble() - 0.5) * 300;
-    double dy = (rng.nextDouble() - 0.5) * 300;
-    _roamTarget = position + Vector2(dx, dy);
-    _roamTimer = 2.0 + rng.nextDouble() * 2.0;
+    // Move towards player with some randomness to avoid stacking perfectly
+    Vector2 playerPos = gameRef.player.position;
+
+    double dx = (rng.nextDouble() - 0.5) * 200;
+    double dy = (rng.nextDouble() - 0.5) * 200;
+
+    _roamTarget = playerPos + Vector2(dx, dy);
+    _roamTimer = 1.0 + rng.nextDouble() * 2.0; // Update target every 1-3 seconds
   }
 
   void takeDamage(Vector2 knockbackDir) {
