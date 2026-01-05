@@ -5,6 +5,10 @@ import 'package:flame/components.dart';
 import 'package:flame/game.dart';
 import 'package:flame/events.dart';
 import 'package:flutter/material.dart' hide Draggable; // Hide Draggable to avoid conflict with Flame if needed, mainly for Colors.
+import 'package:flame/effects.dart'; // For Camera Shake
+import 'grid_background.dart';
+import 'hud.dart';
+import 'visual_effects.dart';
 
 void main() {
   runApp(GameWidget(game: RpgGame()));
@@ -14,6 +18,12 @@ void main() {
 /// Mixes in [PanDetector] to handle single-finger touch inputs.
 class RpgGame extends FlameGame with PanDetector {
   late Player player;
+
+  // Game State
+  int killCount = 0;
+  int wave = 1;
+  double _waveTimer = 0.0;
+  bool gameOver = false;
 
   // --- Input State ---
   Vector2? _dragStartPos; // The initial touch point for "virtual joystick" logic
@@ -29,20 +39,49 @@ class RpgGame extends FlameGame with PanDetector {
   // Tweakable Variable for Dash Sensitivity
   static const double dashVelocityThreshold = 2500.0;
 
+  late World world;
+  late CameraComponent cameraComponent;
+
   @override
   Future<void> onLoad() async {
-    // Initialize Player in the center
-    player = Player()
-      ..position = size / 2
-      ..anchor = Anchor.center;
+    // Create World
+    world = World();
 
-    add(player);
+    // Initialize Player
+    player = Player()..anchor = Anchor.center;
+    world.add(player);
 
-    // Spawn Enemies
+    // Add Infinite Background (Grid)
+    world.add(GridBackground());
+
+    // Setup Camera first so we can add HUD to the Viewport if needed,
+    // but HUD works best added to the game directly (overlay style) or viewport.
+    cameraComponent = CameraComponent(world: world);
+    cameraComponent.viewfinder.anchor = Anchor.center;
+    cameraComponent.follow(player);
+    add(cameraComponent);
+    add(world);
+
+    // Add HUD
+    add(Hud()); // Added to Game, not World, so it stays fixed
+
+    // Initial Wave
+    _spawnWave();
+  }
+
+  void _spawnWave() {
     final Random rng = Random();
-    for (int i = 0; i < 5; i++) {
-      add(Enemy()
-        ..position = size / 2 + Vector2((rng.nextDouble() - 0.5) * 500, (rng.nextDouble() - 0.5) * 500)
+    int enemyCount = 3 + wave * 2; // Increase enemies per wave
+
+    for (int i = 0; i < enemyCount; i++) {
+      // Spawn somewhat near player but not on top
+      Vector2 offset = Vector2(
+        (rng.nextDouble() - 0.5) * 800 + (rng.nextBool() ? 400 : -400),
+        (rng.nextDouble() - 0.5) * 800 + (rng.nextBool() ? 400 : -400),
+      );
+
+      world.add(Enemy()
+        ..position = player.position + offset
       );
     }
   }
@@ -50,8 +89,20 @@ class RpgGame extends FlameGame with PanDetector {
   @override
   void update(double dt) {
     super.update(dt);
+    if (gameOver) return;
 
-    // Slash Timer Logic: Reset accumulation if too much time passes without a slash.
+    // Wave Management
+    bool enemiesAlive = world.children.whereType<Enemy>().isNotEmpty;
+    if (!enemiesAlive) {
+      _waveTimer += dt;
+      if (_waveTimer > 2.0) { // 2 seconds between waves
+        wave++;
+        _spawnWave();
+        _waveTimer = 0.0;
+      }
+    }
+
+    // Slash Timer Logic
     if (_slashWindowTimer > 0) {
       _slashWindowTimer -= dt;
       if (_slashWindowTimer <= 0) {
@@ -60,27 +111,26 @@ class RpgGame extends FlameGame with PanDetector {
     }
 
     // --- COLLISION LOGIC ---
-    // Iterate over enemies to check for hits
-    // Note: In a larger game, use a spatial partition or collision system.
-    for (final child in children) {
+    for (final child in world.children) {
       if (child is Enemy) {
         final Enemy enemy = child;
         final double dist = player.position.distanceTo(enemy.position);
         final double combinedRadius = (player.size.x / 2) + (enemy.size.x / 2);
 
         // 1. Check DASH Hit
-        // Check overlap + player state
         if (player.isDashing && dist < combinedRadius) {
-           // Knockback direction is player's dash direction (or velocity)
-           // We can approximate it by enemy - player
            enemy.takeDamage(enemy.position - player.position);
         }
 
         // 2. Check SLASH Hit
-        // Slash has a larger range (sword length approx 60 + player radius 20 = 80)
-        // Check if player is slashing AND enemy is within range
         if (player.isSlashing && dist < (combinedRadius + 60)) {
            enemy.takeDamage(enemy.position - player.position);
+        }
+
+        // 3. Check PLAYER DAMAGE Hit
+        // If touching and not invincible/dashing
+        if (!player.isDashing && dist < combinedRadius) {
+          player.takeDamage(10); // Simple damage per frame (needs cooldown in real game)
         }
       }
     }
@@ -88,6 +138,19 @@ class RpgGame extends FlameGame with PanDetector {
 
   @override
   void onPanStart(DragStartInfo info) {
+    if (gameOver) {
+       // Reset Game
+       gameOver = false;
+       killCount = 0;
+       wave = 1;
+       player.health = 100;
+       player.position = Vector2.zero();
+       world.children.whereType<Enemy>().forEach((e) => e.removeFromParent());
+       world.children.whereType<VisualEffects>().forEach((e) => e.removeFromParent()); // Clean effects? Actually they clean themselves
+       _spawnWave();
+       return;
+    }
+
     final Vector2 startPos = info.eventPosition.global;
     _dragStartPos = startPos;
     _resetGestureLogic(startPos);
@@ -181,6 +244,10 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   static const double _baseSpeed = 200.0;
   static const double _dashSpeedMult = 3.0;
 
+  // Stats
+  int health = 100;
+  double _damageCooldown = 0.0;
+
   // Dash State
   bool isDashing = false;
   double _dashTimer = 0.0;
@@ -200,11 +267,21 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   void update(double dt) {
     super.update(dt);
 
+    // Damage Cooldown
+    if (_damageCooldown > 0) {
+      _damageCooldown -= dt;
+    }
+
     // --- DASH LOGIC ---
     if (isDashing) {
       _dashTimer -= dt;
       // Move constantly in dash direction
       position.add(_dashDirection * (_baseSpeed * _dashSpeedMult) * dt);
+
+      // Spawn Trail
+      if (_dashTimer % 0.05 < dt) { // Rough "every few frames" check
+         gameRef.world.add(VisualEffects.createDashTrail(position, angle));
+      }
 
       if (_dashTimer <= 0) {
         isDashing = false;
@@ -219,10 +296,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
       position.add(moveDirection! * _baseSpeed * dt);
     }
 
-    // Keep within bounds
-    // Clamp center position to [width/2, screenWidth - width/2]
-    position.x = position.x.clamp(width / 2, gameRef.size.x - width / 2);
-    position.y = position.y.clamp(height / 2, gameRef.size.y - height / 2);
+    // No clamping needed for infinite world.
+    // Camera follows player.
   }
 
   @override
@@ -282,6 +357,19 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     sword.position = size / 2;
     add(sword);
   }
+
+  void takeDamage(int amount) {
+    if (_damageCooldown > 0 || isDashing) return;
+
+    health -= amount;
+    _damageCooldown = 1.0; // Invulnerable for 1 sec
+
+    // Flash effect or shake could go here
+    if (health <= 0) {
+      health = 0;
+      gameRef.gameOver = true;
+    }
+  }
 }
 
 class SwordEffect extends PositionComponent {
@@ -310,14 +398,7 @@ class SwordEffect extends PositionComponent {
     angle += (4 * pi / _duration) * dt;
 
     if (_lifeTime >= _duration) {
-      removeFromParent(); // Component is detached, but object might stick around in memory if referenced
-      // We rely on RpgGame to check 'isSlashing' via logic, but ideally we'd link this lifecycle
-      // to the player's 'isSlashing' flag.
-      // For now, Player sets isSlashing=false via timer or we do it here?
-      // Player logic doesn't explicitly unset 'isSlashing' based on this component yet,
-      // but let's assume Player handles the state.
-      // ACTUALLY: Player.isSlashing is just a flag.
-      // We should probably inform player when done, but for simple prototype it's fine.
+      // Reset slashing state on parent BEFORE removing
       if (parent is Player) {
         (parent as Player).isSlashing = false;
       }
@@ -381,9 +462,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       }
     }
 
-    // Keep within bounds
-    position.x = position.x.clamp(width / 2, gameRef.size.x - width / 2);
-    position.y = position.y.clamp(height / 2, gameRef.size.y - height / 2);
+    // No clamping needed for infinite world
   }
 
   void _pickNewTarget() {
@@ -406,6 +485,16 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
     if (health <= 0) {
       removeFromParent();
+      gameRef.killCount++;
+      // Spawn Explosion
+      gameRef.world.add(VisualEffects.createExplosion(position));
+      // Camera Shake
+      gameRef.cameraComponent.viewfinder.add(
+        MoveEffect.by(
+          Vector2(5, 5),
+          EffectController(duration: 0.1, alternate: true, repeatCount: 3)
+        )
+      );
     }
   }
 
