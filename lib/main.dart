@@ -273,6 +273,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   void slash() {
     if (isSlashing) return;
 
+    isSlashing = true; // Set flag for collision logic
+
     // Trigger slash action
     // Add SwordEffect child
     final sword = SwordEffect();
@@ -284,7 +286,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
 class SwordEffect extends PositionComponent {
   double _lifeTime = 0.0;
-  static const double _duration = 0.2; // Fast slash
+  static const double _duration = 0.3; // Double swing takes slightly longer
 
   final Paint _whitePaint = Paint()
     ..color = const Color(0xFFFFFFFF)
@@ -304,8 +306,8 @@ class SwordEffect extends PositionComponent {
     super.update(dt);
     _lifeTime += dt;
 
-    // Spin 360 degrees (2pi) over duration
-    angle += (2 * pi / _duration) * dt;
+    // Spin 720 degrees (4pi) over duration (Double Swing)
+    angle += (4 * pi / _duration) * dt;
 
     if (_lifeTime >= _duration) {
       removeFromParent(); // Component is detached, but object might stick around in memory if referenced
