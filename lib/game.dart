@@ -113,12 +113,12 @@ class RpgGame extends FlameGame with PanDetector {
 
         // 1. Check DASH Hit
         if (player.isDashing && dist < combinedRadius) {
-           enemy.takeDamage(enemy.position - player.position);
+           enemy.takeDamage(2); // Double damage, no knockback
         }
 
         // 2. Check SLASH Hit
         if (player.isSlashing && dist < (combinedRadius + 60)) {
-           enemy.takeDamage(enemy.position - player.position);
+           enemy.takeDamage(1, knockbackDir: enemy.position - player.position);
         }
 
         // 3. Check PLAYER DAMAGE Hit
@@ -148,14 +148,16 @@ class RpgGame extends FlameGame with PanDetector {
        return;
     }
 
-    final Vector2 startPos = info.eventPosition.global;
+    // Use widget coordinates (screen space) for joystick logic since camera moves
+    final Vector2 startPos = info.eventPosition.widget;
     _dragStartPos = startPos;
     _resetGestureLogic(startPos);
   }
 
   @override
   void onPanUpdate(DragUpdateInfo info) {
-    final Vector2 currentPos = info.eventPosition.global;
+    // Use widget coordinates (screen space) for joystick logic since camera moves
+    final Vector2 currentPos = info.eventPosition.widget;
     final DateTime now = DateTime.now();
 
     // 1. Calculate Velocity for DASH
@@ -414,11 +416,13 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     _roamTimer = 1.0 + rng.nextDouble() * 2.0; // Update target every 1-3 seconds
   }
 
-  void takeDamage(Vector2 knockbackDir) {
+  void takeDamage(int amount, {Vector2? knockbackDir}) {
     if (_invulnerableTimer > 0) return;
 
-    health--;
-    _knockbackVelocity = knockbackDir.normalized() * 400.0;
+    health -= amount;
+    if (knockbackDir != null) {
+       _knockbackVelocity = knockbackDir.normalized() * 400.0;
+    }
     _invulnerableTimer = 0.5;
 
     if (health <= 0) {
