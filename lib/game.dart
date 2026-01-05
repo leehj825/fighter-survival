@@ -104,6 +104,14 @@ class RpgGame extends FlameGame with PanDetector {
       }
     }
 
+    // --- Y-SORTING ---
+    // Sort components by Y position for depth (2.5D view)
+    for (final child in world.children) {
+      if (child is PositionComponent) {
+        child.priority = child.position.y.toInt();
+      }
+    }
+
     // --- COLLISION LOGIC ---
     for (final child in world.children) {
       if (child is Enemy) {
@@ -272,15 +280,52 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
   @override
   void render(Canvas canvas) {
+    // 2.5D Rendering Constants
+    const double h = 15.0; // Height of the cylinder
+    final double r = width / 2;
+    final Offset center = (size / 2).toOffset();
+
+    // Shadow (Base)
+    canvas.drawOval(
+      Rect.fromCenter(center: center, width: width, height: width * 0.6),
+      Paint()..color = Colors.black.withOpacity(0.3)
+    );
+
     if (isDashing) {
+      // Dash Visual: Triangle "Flying" low
       final Path path = Path();
-      path.moveTo(width, height / 2);
-      path.lineTo(0, 0);
-      path.lineTo(0, height);
+      // Adjust points to account for height/offset
+      path.moveTo(width, (height / 2) - h/2);
+      path.lineTo(0, 0 - h/2);
+      path.lineTo(0, height - h/2);
       path.close();
       canvas.drawPath(path, _yellowPaint);
     } else {
-      canvas.drawCircle((size / 2).toOffset(), width / 2, _cyanPaint);
+      // Cylinder Body (Darker)
+      final Paint bodyPaint = Paint()..color = const Color(0xFF00AAAA); // Darker Cyan
+      final Rect bodyRect = Rect.fromLTRB(0, h, width, height); // Simplified rect logic
+      // Actually, standard cylinder logic:
+      // Side rect from (0, -h) to (width, 0) relative to center?
+      // Center is at size/2.
+      // Top circle center: (size.x/2, size.y/2 - h)
+      // Base circle center: (size.x/2, size.y/2)
+
+      final Offset topCenter = center + Offset(0, -h);
+
+      // Draw Body
+      final Path bodyPath = Path();
+      bodyPath.moveTo(center.dx - r, center.dy); // Bottom Left
+      bodyPath.lineTo(center.dx + r, center.dy); // Bottom Right
+      bodyPath.lineTo(topCenter.dx + r, topCenter.dy); // Top Right
+      bodyPath.lineTo(topCenter.dx - r, topCenter.dy); // Top Left
+      bodyPath.close();
+      canvas.drawPath(bodyPath, bodyPaint);
+
+      // Draw Top (Main Circle)
+      canvas.drawCircle(topCenter, r, _cyanPaint);
+
+      // Highlight/Rim (Optional)
+      canvas.drawCircle(topCenter, r, Paint()..style = PaintingStyle.stroke ..color = Colors.white.withOpacity(0.5) ..strokeWidth = 2);
     }
   }
 
@@ -434,11 +479,36 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
   @override
   void render(Canvas canvas) {
-    canvas.drawCircle((size / 2).toOffset(), width / 2, _redPaint);
+    // 2.5D Rendering
+    const double h = 15.0;
+    final double r = width / 2;
+    final Offset center = (size / 2).toOffset();
 
+    // Shadow
+    canvas.drawOval(
+      Rect.fromCenter(center: center, width: width, height: width * 0.6),
+      Paint()..color = Colors.black.withOpacity(0.3)
+    );
+
+    // Cylinder Body
+    final Paint bodyPaint = Paint()..color = const Color(0xFFAA0000); // Darker Red
+    final Offset topCenter = center + Offset(0, -h);
+
+    final Path bodyPath = Path();
+    bodyPath.moveTo(center.dx - r, center.dy);
+    bodyPath.lineTo(center.dx + r, center.dy);
+    bodyPath.lineTo(topCenter.dx + r, topCenter.dy);
+    bodyPath.lineTo(topCenter.dx - r, topCenter.dy);
+    bodyPath.close();
+    canvas.drawPath(bodyPath, bodyPaint);
+
+    // Top
+    canvas.drawCircle(topCenter, r, _redPaint);
+
+    // Flash
     if (_invulnerableTimer > 0) {
        final Paint flashPaint = Paint()..color = const Color(0x88FFFFFF);
-       canvas.drawCircle((size / 2).toOffset(), width / 2, flashPaint);
+       canvas.drawCircle(topCenter, r, flashPaint);
     }
   }
 }
