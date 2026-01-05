@@ -64,7 +64,7 @@ class RpgGame extends FlameGame with PanDetector {
 
   @override
   void onPanStart(DragStartInfo info) {
-    _handleInput(info.eventPosition.global);
+    // Only reset logic on start. Movement is handled in onPanUpdate via drag delta.
     _resetGestureLogic(info.eventPosition.global);
   }
 
@@ -113,8 +113,14 @@ class RpgGame extends FlameGame with PanDetector {
       }
     }
 
-    // 3. Normal Movement Target
-    _handleInput(currentPos);
+    // 3. Normal Movement (Virtual Joystick / Drag Direction)
+    // Move in the direction of the drag delta, not to absolute position
+    if (_lastFingerPosition != null) {
+      final Vector2 delta = currentPos - _lastFingerPosition!;
+      if (delta.length > 0) {
+        _handleInput(delta.normalized());
+      }
+    }
 
     _lastFingerPosition = currentPos;
     _lastInputTime = now;
@@ -122,15 +128,12 @@ class RpgGame extends FlameGame with PanDetector {
 
   @override
   void onPanEnd(DragEndInfo info) {
-    player.targetPosition = null; // Stop moving when finger lifts?
-    // Or keep moving to last point? "Standard dragging moves the player." usually implies stop on release or move to last known.
-    // Let's set target to null to stop.
-    player.targetPosition = null;
+    player.moveDirection = null; // Stop moving
     _accumulatedRotation = 0.0;
   }
 
-  void _handleInput(Vector2 pos) {
-    player.targetPosition = pos;
+  void _handleInput(Vector2 dir) {
+    player.moveDirection = dir;
   }
 
   void _resetGestureLogic(Vector2 pos) {
@@ -143,7 +146,7 @@ class RpgGame extends FlameGame with PanDetector {
 
 class Player extends PositionComponent {
   // Movement
-  Vector2? targetPosition;
+  Vector2? moveDirection;
   static const double _baseSpeed = 200.0;
   static const double _dashSpeedMult = 3.0;
 
@@ -180,23 +183,9 @@ class Player extends PositionComponent {
       }
     }
     // --- NORMAL MOVEMENT ---
-    else if (targetPosition != null) {
-      final Vector2 dir = targetPosition! - position;
-      final double dist = dir.length;
-
-      if (dist > 5.0) { // Deadzone
-        // Simple Lerp-like movement or constant speed?
-        // "Implement smooth movement ... using a lerp"
-        // standard lerp formula: pos = pos + (target - pos) * rate * dt
-        // But for games, constant speed is often preferred for control.
-        // However, prompt asks for "smooth movement ... using a lerp".
-
-        double lerpSpeed = 10.0; // Tuning factor
-        position.add(dir * lerpSpeed * dt);
-
-        // Optionally cap speed to max speed to avoid instant teleport on far touches if pure lerp
-        // But pure lerp slows down as you get closer.
-      }
+    else if (moveDirection != null) {
+      // Move in the specific direction at constant speed
+      position.add(moveDirection! * _baseSpeed * dt);
     }
   }
 
