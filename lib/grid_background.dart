@@ -1,6 +1,6 @@
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_rpg_prototype/main.dart'; // Ensure correct import
+import 'game.dart'; // Changed from main.dart to game.dart
 
 class GridBackground extends PositionComponent with HasGameRef<RpgGame> {
   final Paint _gridPaint = Paint()
