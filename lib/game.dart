@@ -196,8 +196,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   final Paint _aimPaint = Paint()
     ..color = Colors.white.withOpacity(0.5)
     ..style = PaintingStyle.stroke
-    ..strokeWidth = 2.0
-    ..pathEffect = PathEffect.dashPathEffect(const [10, 10], 0);
+    ..strokeWidth = 2.0;
 
   // Bounds for Pinball Physics
   static const double _worldBound = 1000.0;
