@@ -21,11 +21,19 @@ class RpgGame extends FlameGame with PanDetector {
   double _waveTimer = 0.0;
   bool gameOver = false;
 
-  // --- Input State (Slingshot) ---
+  // --- Input State ---
   Vector2? _dragStartPos;
-  Vector2? _dragCurrentPos;
-  bool _isAiming = false;
-  static const double _maxDragDistance = 200.0; // Max power limit
+  Vector2? _lastFingerPosition;
+  DateTime? _lastInputTime;
+
+  // Slash Detection State
+  double _accumulatedRotation = 0.0;
+  static const double _slashTimeWindow = 1.0;
+  double _slashWindowTimer = 0.0;
+  static const double _slashThreshold = 250.0 * (pi / 180.0);
+
+  // Tweakable Variable for Dash Sensitivity
+  static const double dashVelocityThreshold = 2500.0;
 
   late World world;
   late CameraComponent cameraComponent;
@@ -42,6 +50,9 @@ class RpgGame extends FlameGame with PanDetector {
     // Add Infinite Background (Grid)
     world.add(GridBackground());
 
+    // Spawn Obstacles (Rough background elements)
+    _spawnObstacles();
+
     // Setup Camera
     cameraComponent = CameraComponent(world: world);
     cameraComponent.viewfinder.anchor = Anchor.center;
@@ -54,6 +65,22 @@ class RpgGame extends FlameGame with PanDetector {
 
     // Initial Wave
     _spawnWave();
+  }
+
+  void _spawnObstacles() {
+    final Random rng = Random();
+    // Spawn 20 random obstacles near start
+    for (int i = 0; i < 20; i++) {
+      bool isBig = rng.nextBool();
+      Vector2 pos = Vector2(
+        (rng.nextDouble() - 0.5) * 2000,
+        (rng.nextDouble() - 0.5) * 2000,
+      );
+      // Don't spawn on top of player
+      if (pos.length > 200) {
+        world.add(Obstacle(radius: isBig ? 40 : 20, height: isBig ? 60 : 30)..position = pos);
+      }
+    }
   }
 
   void _spawnWave() {
@@ -88,39 +115,66 @@ class RpgGame extends FlameGame with PanDetector {
       }
     }
 
-    // Sync Aiming state to Player for rendering
-    player.isAiming = _isAiming;
-    if (_isAiming && _dragStartPos != null && _dragCurrentPos != null) {
-      player.aimEnd = player.position + (_dragCurrentPos! - _dragStartPos!);
-    } else {
-      player.aimEnd = null;
+    // Slash Timer Logic
+    if (_slashWindowTimer > 0) {
+      _slashWindowTimer -= dt;
+      if (_slashWindowTimer <= 0) {
+        _accumulatedRotation = 0.0;
+      }
+    }
+
+    // --- Y-SORTING ---
+    // Sort components by Y position for depth (2.5D view)
+    for (final child in world.children) {
+      if (child is PositionComponent) {
+        child.priority = child.position.y.toInt();
+      }
     }
 
     // --- COLLISION LOGIC ---
     for (final child in world.children) {
+      // 1. Obstacle Collision
+      if (child is Obstacle) {
+        // Player vs Obstacle
+        double distP = player.position.distanceTo(child.position);
+        double radiusP = (player.size.x / 2) + child.radius;
+        if (distP < radiusP) {
+          Vector2 push = (player.position - child.position).normalized() * (radiusP - distP);
+          player.position += push;
+        }
+
+        // Enemy vs Obstacle
+        for (final other in world.children) {
+          if (other is Enemy) {
+             double distE = other.position.distanceTo(child.position);
+             double radiusE = (other.size.x / 2) + child.radius;
+             if (distE < radiusE) {
+               Vector2 push = (other.position - child.position).normalized() * (radiusE - distE);
+               other.position += push;
+             }
+          }
+        }
+      }
+
+      // 2. Combat
       if (child is Enemy) {
         final Enemy enemy = child;
         final double dist = player.position.distanceTo(enemy.position);
         final double combinedRadius = (player.size.x / 2) + (enemy.size.x / 2);
 
-        if (dist < combinedRadius) {
-           final double speed = player.velocity.length;
+        // Check DASH Hit
+        if (player.isDashing && dist < combinedRadius) {
+           enemy.takeDamage(2); // Dash deals 2 damage, no knockback
+        }
 
-           // High Speed = Attack
-           if (speed > 300) {
-             enemy.takeDamage(1, knockbackDir: player.velocity);
-             // Bounce Player
-             final Vector2 normal = (player.position - enemy.position).normalized();
-             player.velocity.reflect(normal);
-             player.velocity.scale(0.8); // Lose some energy
-           }
-           // Low Speed = Vulnerable
-           else if (speed < 50) {
-             player.takeDamage(10);
-             // Slight push back
-             final Vector2 push = (player.position - enemy.position).normalized() * 100;
-             player.velocity = push;
-           }
+        // Check SLASH Hit
+        if (player.isSlashing && dist < (combinedRadius + 60)) {
+           enemy.takeDamage(1, knockbackDir: enemy.position - player.position);
+        }
+
+        // Check PLAYER DAMAGE Hit
+        if (!player.isDashing && dist < combinedRadius) {
+          player.takeDamage(10);
         }
       }
     }
@@ -135,71 +189,146 @@ class RpgGame extends FlameGame with PanDetector {
        wave = 1;
        player.health = 100;
        player.position = Vector2.zero();
-       player.velocity = Vector2.zero();
        world.children.whereType<Enemy>().forEach((e) => e.removeFromParent());
        world.children.whereType<ParticleSystemComponent>().forEach((e) => e.removeFromParent());
        _spawnWave();
        return;
     }
 
-    // Slingshot Start: Anchor Point
-    // Can only aim if moving slowly
-    if (player.velocity.length < 50) {
-      _dragStartPos = info.eventPosition.widget;
-      _dragCurrentPos = _dragStartPos;
-      _isAiming = true;
-    }
+    final Vector2 startPos = info.eventPosition.widget;
+    _dragStartPos = startPos;
+    _resetGestureLogic(startPos);
   }
 
   @override
   void onPanUpdate(DragUpdateInfo info) {
-    if (_isAiming) {
-      _dragCurrentPos = info.eventPosition.widget;
+    final Vector2 currentPos = info.eventPosition.widget;
+    final DateTime now = DateTime.now();
+
+    // 1. Calculate Velocity for DASH (Flick detection)
+    if (_lastInputTime != null && _lastFingerPosition != null) {
+      final double dtSeconds = now.difference(_lastInputTime!).inMicroseconds / 1000000.0;
+      if (dtSeconds > 0) {
+        final double dist = currentPos.distanceTo(_lastFingerPosition!);
+        final double velocity = dist / dtSeconds;
+
+        if (velocity > dashVelocityThreshold) {
+          player.dash(currentPos - _lastFingerPosition!);
+        }
+      }
     }
+
+    // 2. Calculate Angle for SLASH (Circular motion)
+    if (!player.isSlashing && _dragStartPos != null) {
+      final Vector2 center = _dragStartPos!;
+      final Vector2 toFinger = currentPos - center;
+      final Vector2 prevToFinger = (_lastFingerPosition ?? currentPos) - center;
+
+      if (toFinger.length > 20 && prevToFinger.length > 20) {
+        final double currentAngle = atan2(toFinger.y, toFinger.x);
+        final double prevAngle = atan2(prevToFinger.y, prevToFinger.x);
+
+        double diff = currentAngle - prevAngle;
+        while (diff < -pi) diff += 2 * pi;
+        while (diff > pi) diff -= 2 * pi;
+
+        _accumulatedRotation += diff;
+        _slashWindowTimer = _slashTimeWindow;
+
+        if (_accumulatedRotation.abs() > _slashThreshold) {
+          player.slash();
+          _accumulatedRotation = 0.0;
+        }
+      }
+    }
+
+    // 3. Normal Movement (Virtual Joystick Style)
+    if (_dragStartPos != null) {
+      final Vector2 offset = currentPos - _dragStartPos!;
+      if (offset.length > 10) {
+        _handleInput(offset.normalized());
+      } else {
+        _handleInput(Vector2.zero());
+      }
+    }
+
+    _lastFingerPosition = currentPos;
+    _lastInputTime = now;
   }
 
   @override
   void onPanEnd(DragEndInfo info) {
-    if (_isAiming && _dragStartPos != null && _dragCurrentPos != null) {
-      final Vector2 dragVector = _dragCurrentPos! - _dragStartPos!;
+    player.moveDirection = null;
+    _accumulatedRotation = 0.0;
+    _dragStartPos = null;
+  }
 
-      // Calculate Launch Vector (Opposite to Drag)
-      // Clamp power
-      if (dragVector.length > 0) {
-        final double power = min(dragVector.length, _maxDragDistance);
-        final Vector2 dir = -dragVector.normalized(); // Shoot opposite
+  void _handleInput(Vector2 dir) {
+    player.moveDirection = dir;
+  }
 
-        // Impulse multiplier
-        const double launchMultiplier = 5.0;
-        player.velocity = dir * power * launchMultiplier;
-      }
+  void _resetGestureLogic(Vector2 pos) {
+    _lastFingerPosition = pos;
+    _lastInputTime = DateTime.now();
+    _accumulatedRotation = 0.0;
+    _slashWindowTimer = _slashTimeWindow;
+  }
+}
 
-      _isAiming = false;
-      _dragStartPos = null;
-      _dragCurrentPos = null;
-    }
+class Obstacle extends PositionComponent {
+  final double radius;
+  final double height;
+  final Paint _paint = Paint()..color = Colors.grey;
+
+  Obstacle({required this.radius, required this.height}) : super(anchor: Anchor.center, size: Vector2.all(radius * 2));
+
+  @override
+  void render(Canvas canvas) {
+    // 2.5D Cylinder Render
+    final Offset center = (size / 2).toOffset();
+    final double r = radius;
+    final double h = height;
+
+    // Shadow
+    canvas.drawOval(
+      Rect.fromCenter(center: center, width: width, height: width * 0.6),
+      Paint()..color = Colors.black.withOpacity(0.3)
+    );
+
+    // Body
+    final Offset topCenter = center + Offset(0, -h);
+    final Path bodyPath = Path();
+    bodyPath.moveTo(center.dx - r, center.dy);
+    bodyPath.lineTo(center.dx + r, center.dy);
+    bodyPath.lineTo(topCenter.dx + r, topCenter.dy);
+    bodyPath.lineTo(topCenter.dx - r, topCenter.dy);
+    bodyPath.close();
+    canvas.drawPath(bodyPath, Paint()..color = Colors.grey.shade700);
+
+    // Top
+    canvas.drawCircle(topCenter, r, Paint()..color = Colors.grey.shade400);
+    // Rim
+    canvas.drawCircle(topCenter, r, Paint()..style = PaintingStyle.stroke ..color = Colors.white.withOpacity(0.3));
   }
 }
 
 class Player extends PositionComponent with HasGameRef<RpgGame> {
-  Vector2 velocity = Vector2.zero();
+  Vector2? moveDirection;
+  static const double _baseSpeed = 200.0;
+  static const double _dashSpeedMult = 3.0;
 
-  // Stats
   int health = 100;
   double _damageCooldown = 0.0;
 
-  // Visual State
-  bool isAiming = false;
-  Vector2? aimEnd; // Where the drag is pointing (relative to world or player)
+  bool isDashing = false;
+  double _dashTimer = 0.0;
+  static const double _dashDuration = 0.2;
+  Vector2 _dashDirection = Vector2.zero();
+
+  bool isSlashing = false;
 
   final Paint _cyanPaint = Paint()..color = const Color(0xFF00FFFF);
-  final Paint _aimPaint = Paint()
-    ..color = Colors.white.withOpacity(0.5)
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 2.0;
-
-  // Bounds for Pinball Physics
-  static const double _worldBound = 1000.0;
+  final Paint _yellowPaint = Paint()..color = const Color(0xFFFFFF00);
 
   Player() : super(size: Vector2.all(40));
 
@@ -211,67 +340,95 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
       _damageCooldown -= dt;
     }
 
-    // Physics Integration
-    position.add(velocity * dt);
+    if (isDashing) {
+      _dashTimer -= dt;
+      position.add(_dashDirection * (_baseSpeed * _dashSpeedMult) * dt);
 
-    // Friction
-    velocity.scale(0.98); // Slow down over time
-    if (velocity.length < 10) velocity.setZero();
-
-    // Spawn Trail if fast
-    if (velocity.length > 300) {
-      // Create trail effect periodically
-      // We can use a timer or just chance per frame
-      if (dt > 0 && DateTime.now().millisecond % 50 < 20) {
+      // Spawn Trail
+      if (_dashTimer % 0.05 < dt) {
          gameRef.world.add(VisualEffects.createDashTrail(position, angle));
       }
-      // Rotate based on velocity
-      angle = atan2(velocity.y, velocity.x);
-    } else {
-      angle = 0;
-    }
 
-    // Bounce off World Bounds
-    if (position.x < -_worldBound) {
-      position.x = -_worldBound;
-      velocity.x = -velocity.x;
-    } else if (position.x > _worldBound) {
-      position.x = _worldBound;
-      velocity.x = -velocity.x;
-    }
-
-    if (position.y < -_worldBound) {
-      position.y = -_worldBound;
-      velocity.y = -velocity.y;
-    } else if (position.y > _worldBound) {
-      position.y = _worldBound;
-      velocity.y = -velocity.y;
+      if (_dashTimer <= 0) {
+        isDashing = false;
+        angle = 0;
+      }
+    } else if (moveDirection != null && moveDirection != Vector2.zero()) {
+      position.add(moveDirection! * _baseSpeed * dt);
     }
   }
 
   @override
   void render(Canvas canvas) {
-    // Draw Aiming Line
-    if (isAiming && aimEnd != null) {
-      // Draw line from center to aimEnd (BUT aimEnd is absolute world pos calculated in game)
-      // Actually, in RpgGame we set aimEnd = player.position + dragVector
-      // So relative to player (0,0), the end point is (aimEnd - position)
+    // 2.5D Rendering Constants
+    const double h = 15.0; // Height of the cylinder
+    final double r = width / 2;
+    final Offset center = (size / 2).toOffset();
 
-      final Vector2 localEnd = (aimEnd! - position);
+    // Shadow (Base)
+    canvas.drawOval(
+      Rect.fromCenter(center: center, width: width, height: width * 0.6),
+      Paint()..color = Colors.black.withOpacity(0.3)
+    );
 
-      // We want to show launch direction (Opposite to drag)
-      // So draw line opposite to localEnd
-      // localEnd represents the FINGER drag.
-      // Launch will be -localEnd.
+    if (isDashing) {
+      // Dash Visual: Triangle "Flying" low
+      final Path path = Path();
+      // Adjust points to account for height/offset
+      path.moveTo(width, (height / 2) - h/2);
+      path.lineTo(0, 0 - h/2);
+      path.lineTo(0, height - h/2);
+      path.close();
+      canvas.drawPath(path, _yellowPaint);
+    } else {
+      // Cylinder Body (Darker)
+      final Paint bodyPaint = Paint()..color = const Color(0xFF00AAAA); // Darker Cyan
 
-      canvas.drawLine(Offset(width/2, height/2), (-(localEnd)).toOffset(), _aimPaint);
+      final Offset topCenter = center + Offset(0, -h);
+
+      // Draw Body
+      final Path bodyPath = Path();
+      bodyPath.moveTo(center.dx - r, center.dy); // Bottom Left
+      bodyPath.lineTo(center.dx + r, center.dy); // Bottom Right
+      bodyPath.lineTo(topCenter.dx + r, topCenter.dy); // Top Right
+      bodyPath.lineTo(topCenter.dx - r, topCenter.dy); // Top Left
+      bodyPath.close();
+      canvas.drawPath(bodyPath, bodyPaint);
+
+      // Draw Top (Main Circle)
+      canvas.drawCircle(topCenter, r, _cyanPaint);
+
+      // Highlight/Rim (Optional)
+      canvas.drawCircle(topCenter, r, Paint()..style = PaintingStyle.stroke ..color = Colors.white.withOpacity(0.5) ..strokeWidth = 2);
     }
+  }
 
-    canvas.drawCircle((size / 2).toOffset(), width / 2, _cyanPaint);
+  void dash(Vector2 direction) {
+    if (isDashing) return;
+
+    isDashing = true;
+    _dashTimer = _dashDuration;
+
+    if (direction.length > 0) {
+      _dashDirection = direction.normalized();
+      angle = atan2(_dashDirection.y, _dashDirection.x);
+    } else {
+      _dashDirection = Vector2(1, 0);
+      angle = 0;
+    }
+  }
+
+  void slash() {
+    if (isSlashing) return;
+
+    isSlashing = true;
+    final sword = SwordEffect();
+    sword.position = size / 2;
+    add(sword);
   }
 
   void takeDamage(int amount) {
-    if (_damageCooldown > 0) return;
+    if (_damageCooldown > 0 || isDashing) return;
 
     health -= amount;
     _damageCooldown = 1.0;
@@ -283,9 +440,41 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   }
 }
 
-// Enemy class kept mostly the same, removed obsolete Slash/Dash logic references if any
-// But actually Enemy logic in Game class handles damage now.
-// We just need to ensure Enemy still functions.
+class SwordEffect extends PositionComponent {
+  double _lifeTime = 0.0;
+  static const double _duration = 0.3;
+
+  final Paint _whitePaint = Paint()
+    ..color = const Color(0xFFFFFFFF)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 4.0;
+
+  SwordEffect() : super(anchor: Anchor.centerLeft);
+
+  @override
+  void onLoad() {
+    size = Vector2(60, 10);
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _lifeTime += dt;
+    angle += (4 * pi / _duration) * dt;
+
+    if (_lifeTime >= _duration) {
+      if (parent is Player) {
+        (parent as Player).isSlashing = false;
+      }
+      removeFromParent();
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawLine(const Offset(20, 0), Offset(width + 20, 0), _whitePaint);
+  }
+}
 
 class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   int health = 2;
@@ -331,13 +520,14 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
   void _pickNewTarget() {
     final Random rng = Random();
+    // Move towards player with some randomness to avoid stacking perfectly
     Vector2 playerPos = gameRef.player.position;
 
     double dx = (rng.nextDouble() - 0.5) * 200;
     double dy = (rng.nextDouble() - 0.5) * 200;
 
     _roamTarget = playerPos + Vector2(dx, dy);
-    _roamTimer = 1.0 + rng.nextDouble() * 2.0;
+    _roamTimer = 1.0 + rng.nextDouble() * 2.0; // Update target every 1-3 seconds
   }
 
   void takeDamage(int amount, {Vector2? knockbackDir}) {
@@ -364,11 +554,36 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
   @override
   void render(Canvas canvas) {
-    canvas.drawCircle((size / 2).toOffset(), width / 2, _redPaint);
+    // 2.5D Rendering
+    const double h = 15.0;
+    final double r = width / 2;
+    final Offset center = (size / 2).toOffset();
 
+    // Shadow
+    canvas.drawOval(
+      Rect.fromCenter(center: center, width: width, height: width * 0.6),
+      Paint()..color = Colors.black.withOpacity(0.3)
+    );
+
+    // Cylinder Body
+    final Paint bodyPaint = Paint()..color = const Color(0xFFAA0000); // Darker Red
+    final Offset topCenter = center + Offset(0, -h);
+
+    final Path bodyPath = Path();
+    bodyPath.moveTo(center.dx - r, center.dy);
+    bodyPath.lineTo(center.dx + r, center.dy);
+    bodyPath.lineTo(topCenter.dx + r, topCenter.dy);
+    bodyPath.lineTo(topCenter.dx - r, topCenter.dy);
+    bodyPath.close();
+    canvas.drawPath(bodyPath, bodyPaint);
+
+    // Top
+    canvas.drawCircle(topCenter, r, _redPaint);
+
+    // Flash
     if (_invulnerableTimer > 0) {
        final Paint flashPaint = Paint()..color = const Color(0x88FFFFFF);
-       canvas.drawCircle((size / 2).toOffset(), width / 2, flashPaint);
+       canvas.drawCircle(topCenter, r, flashPaint);
     }
   }
 }
