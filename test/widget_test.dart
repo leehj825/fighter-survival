@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flame/game.dart';
-import 'package:flutter_rpg_prototype/main.dart'; // Ensure this matches your package name in pubspec.yaml
+import 'package:flutter_rpg_prototype/game.dart'; // Changed import to game.dart
 
 void main() {
   testWidgets('RpgGame starts and runs', (WidgetTester tester) async {
