@@ -16,19 +16,17 @@ class RpgGame extends FlameGame with PanDetector {
   late Player player;
 
   // --- Input State ---
+  Vector2? _dragStartPos; // The initial touch point for "virtual joystick" logic
   Vector2? _lastFingerPosition;
   DateTime? _lastInputTime;
 
   // Slash Detection State
   double _accumulatedRotation = 0.0;
-  Vector2? _gestureStartVector; // Vector from player to finger at start of gesture analysis window
+  static const double _slashTimeWindow = 1.0; // Relaxed window for easier execution
   double _slashWindowTimer = 0.0;
-  static const double _slashTimeWindow = 0.5; // Seconds to complete the circle
-  static const double _slashThreshold = 300.0 * (pi / 180.0); // 300 degrees in radians
+  static const double _slashThreshold = 250.0 * (pi / 180.0); // Slightly relaxed threshold
 
   // Tweakable Variable for Dash Sensitivity
-  // Higher value = requires faster flick to dash.
-  // This represents pixels per second.
   static const double dashVelocityThreshold = 2500.0;
 
   @override
@@ -45,15 +43,7 @@ class RpgGame extends FlameGame with PanDetector {
   void update(double dt) {
     super.update(dt);
 
-    // Slash Window Timer logic
-    // We decay the accumulated rotation or reset it if user stops rotating fast enough?
-    // Or simple window: Reset accumulation if no input for a bit, or just decay it.
-    // The prompt says: "If the total absolute rotation exceeds 300 degrees within a short window (0.5s)"
-    // This implies a sliding window or a reset. Simple approach:
-    // If we haven't slashed, and time passes, we might want to reset the accumulation if input stops.
-    // But strict window logic: We just accumulate. If timer exceeds 0.5, we reset accumulation.
-    // We will handle the timer reset in onPanMove when we detect activity.
-
+    // Slash Timer Logic: Reset accumulation if too much time passes without a slash.
     if (_slashWindowTimer > 0) {
       _slashWindowTimer -= dt;
       if (_slashWindowTimer <= 0) {
@@ -64,8 +54,9 @@ class RpgGame extends FlameGame with PanDetector {
 
   @override
   void onPanStart(DragStartInfo info) {
-    // Only reset logic on start. Movement is handled in onPanUpdate via drag delta.
-    _resetGestureLogic(info.eventPosition.global);
+    final Vector2 startPos = info.eventPosition.global;
+    _dragStartPos = startPos;
+    _resetGestureLogic(startPos);
   }
 
   @override
@@ -73,7 +64,7 @@ class RpgGame extends FlameGame with PanDetector {
     final Vector2 currentPos = info.eventPosition.global;
     final DateTime now = DateTime.now();
 
-    // 1. Calculate Velocity for DASH
+    // 1. Calculate Velocity for DASH (Flick detection)
     if (_lastInputTime != null && _lastFingerPosition != null) {
       final double dtSeconds = now.difference(_lastInputTime!).inMicroseconds / 1000000.0;
       if (dtSeconds > 0) {
@@ -86,15 +77,16 @@ class RpgGame extends FlameGame with PanDetector {
       }
     }
 
-    // 2. Calculate Angle for SLASH
-    // We track the angle of the vector (Player -> Finger)
-    // Actually, usually circular gestures are around a center.
-    // The prompt says: "Track the angle between the player and the finger."
-    if (!player.isSlashing) { // Only detect if not already slashing
-      final Vector2 toFinger = currentPos - player.position;
-      final Vector2 prevToFinger = (_lastFingerPosition ?? currentPos) - player.position;
+    // 2. Calculate Angle for SLASH (Circular motion)
+    // We track the rotation of the input gesture itself (joystick rotation).
+    // Center of rotation is the Joystick Start Position (or player if not dragging).
+    if (!player.isSlashing && _dragStartPos != null) {
+      final Vector2 center = _dragStartPos!;
+      final Vector2 toFinger = currentPos - center;
+      final Vector2 prevToFinger = (_lastFingerPosition ?? currentPos) - center;
 
-      if (toFinger.length > 10 && prevToFinger.length > 10) { // Deadzone
+      // Use a larger deadzone to avoid noise when finger is too close to center
+      if (toFinger.length > 20 && prevToFinger.length > 20) {
         final double currentAngle = atan2(toFinger.y, toFinger.x);
         final double prevAngle = atan2(prevToFinger.y, prevToFinger.x);
 
@@ -104,7 +96,7 @@ class RpgGame extends FlameGame with PanDetector {
         while (diff > pi) diff -= 2 * pi;
 
         _accumulatedRotation += diff;
-        _slashWindowTimer = _slashTimeWindow; // Keep window open while interacting
+        _slashWindowTimer = _slashTimeWindow; // Reset window while rotating
 
         if (_accumulatedRotation.abs() > _slashThreshold) {
           player.slash();
@@ -113,12 +105,16 @@ class RpgGame extends FlameGame with PanDetector {
       }
     }
 
-    // 3. Normal Movement (Virtual Joystick / Drag Direction)
-    // Move in the direction of the drag delta, not to absolute position
-    if (_lastFingerPosition != null) {
-      final Vector2 delta = currentPos - _lastFingerPosition!;
-      if (delta.length > 0) {
-        _handleInput(delta.normalized());
+    // 3. Normal Movement (Virtual Joystick Style)
+    // Calculate direction relative to where the drag STARTED.
+    // This allows stable movement even if the finger stops moving but stays offset.
+    if (_dragStartPos != null) {
+      final Vector2 offset = currentPos - _dragStartPos!;
+      if (offset.length > 10) { // Deadzone for joystick center
+        _handleInput(offset.normalized());
+      } else {
+        // If back to center, stop moving
+        _handleInput(Vector2.zero());
       }
     }
 
@@ -130,6 +126,7 @@ class RpgGame extends FlameGame with PanDetector {
   void onPanEnd(DragEndInfo info) {
     player.moveDirection = null; // Stop moving
     _accumulatedRotation = 0.0;
+    _dragStartPos = null;
   }
 
   void _handleInput(Vector2 dir) {
@@ -183,7 +180,7 @@ class Player extends PositionComponent {
       }
     }
     // --- NORMAL MOVEMENT ---
-    else if (moveDirection != null) {
+    else if (moveDirection != null && moveDirection != Vector2.zero()) {
       // Move in the specific direction at constant speed
       position.add(moveDirection! * _baseSpeed * dt);
     }
