@@ -3,9 +3,30 @@ import 'package:flutter/material.dart';
 import 'game.dart';
 
 class Hud extends PositionComponent with HasGameRef<RpgGame> {
-  late TextComponent scoreText;
-  late TextComponent healthText;
-  late TextComponent storyText;
+  final TextComponent scoreText = TextComponent(
+    text: 'Kills: 0',
+    textRenderer: TextPaint(style: const TextStyle(color: Colors.white, fontSize: 20)),
+    position: Vector2(20, 40),
+  );
+
+  final TextComponent healthText = TextComponent(
+    text: 'HP: 100',
+    textRenderer: TextPaint(style: const TextStyle(color: Colors.green, fontSize: 20)),
+    position: Vector2(20, 70),
+  );
+
+  final TextComponent storyText = TextComponent(
+    text: '',
+    anchor: Anchor.bottomCenter,
+    textRenderer: TextPaint(
+      style: TextStyle(
+        color: Colors.yellowAccent,
+        fontSize: 24,
+        fontWeight: FontWeight.bold,
+        backgroundColor: Colors.black.withOpacity(0.5),
+      ),
+    ),
+  );
 
   final Paint _barBgPaint = Paint()..color = Colors.grey.withOpacity(0.5);
   final Paint _barFillPaint = Paint()..color = Colors.cyanAccent;
@@ -14,32 +35,8 @@ class Hud extends PositionComponent with HasGameRef<RpgGame> {
 
   @override
   Future<void> onLoad() async {
-    scoreText = TextComponent(
-      text: 'Kills: 0',
-      textRenderer: TextPaint(style: const TextStyle(color: Colors.white, fontSize: 20)),
-      position: Vector2(20, 40),
-    );
     add(scoreText);
-
-    healthText = TextComponent(
-      text: 'HP: 100',
-      textRenderer: TextPaint(style: const TextStyle(color: Colors.green, fontSize: 20)),
-      position: Vector2(20, 70),
-    );
     add(healthText);
-
-    storyText = TextComponent(
-      text: '',
-      anchor: Anchor.bottomCenter,
-      textRenderer: TextPaint(
-        style: TextStyle(
-          color: Colors.yellowAccent,
-          fontSize: 24,
-          fontWeight: FontWeight.bold,
-          backgroundColor: Colors.black.withOpacity(0.5),
-        ),
-      ),
-    );
     add(storyText);
   }
 
