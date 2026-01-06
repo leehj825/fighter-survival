@@ -23,10 +23,51 @@ extension SafeVector2 on Vector2 {
   }
 }
 
+/// A simple virtual joystick component
+class VirtualJoystick extends PositionComponent with HasVisibility {
+  final double knobRadius = 20;
+  final double baseRadius = 50;
+
+  Vector2 _knobPos = Vector2.zero();
+
+  final Paint _basePaint = Paint()..color = Colors.white.withOpacity(0.2)..style = PaintingStyle.fill;
+  final Paint _baseStroke = Paint()..color = Colors.white.withOpacity(0.4)..style = PaintingStyle.stroke..strokeWidth = 2;
+  final Paint _knobPaint = Paint()..color = Colors.cyanAccent.withOpacity(0.8);
+
+  VirtualJoystick() : super(anchor: Anchor.center, size: Vector2.all(100)) {
+    isVisible = false;
+  }
+
+  void updateKnob(Vector2 delta) {
+    if (delta.length > baseRadius) {
+      _knobPos = delta.normalized() * baseRadius;
+    } else {
+      _knobPos = delta;
+    }
+  }
+
+  void reset() {
+    _knobPos = Vector2.zero();
+  }
+
+  @override
+  void render(Canvas canvas) {
+    if (!isVisible) return;
+
+    // Draw Base
+    canvas.drawCircle(Offset.zero, baseRadius, _basePaint);
+    canvas.drawCircle(Offset.zero, baseRadius, _baseStroke);
+
+    // Draw Knob
+    canvas.drawCircle(_knobPos.toOffset(), knobRadius, _knobPaint);
+  }
+}
+
 /// The main Game class.
-class RpgGame extends FlameGame with PanDetector, TapDetector {
+class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   late Player player;
   late Hud hud;
+  late VirtualJoystick joystick;
 
   // Game State
   int killCount = 0;
@@ -46,9 +87,16 @@ class RpgGame extends FlameGame with PanDetector, TapDetector {
   };
 
   // --- Input State ---
-  Vector2? _dragStartPos;
-  Vector2? _lastFingerPosition;
-  DateTime? _lastInputTime;
+  int? _movePointerId;
+  int? _actionPointerId;
+
+  // Movement State
+  Vector2? _moveStartPos;
+
+  // Action Gesture State
+  Vector2? _actionStartPos;
+  Vector2? _lastActionPos;
+  DateTime? _lastActionTime;
 
   // Slash Detection State
   double _accumulatedRotation = 0.0;
@@ -87,6 +135,10 @@ class RpgGame extends FlameGame with PanDetector, TapDetector {
     // Add HUD
     hud = Hud();
     add(hud);
+
+    // Add Joystick (On top of HUD or World? HUD is Priority 100. Joystick on top of everything)
+    joystick = VirtualJoystick()..priority = 200;
+    cameraComponent.viewport.add(joystick); // Add to viewport so it stays on screen
 
     // Initial Wave
     _spawnWave();
@@ -254,8 +306,6 @@ class RpgGame extends FlameGame with PanDetector, TapDetector {
     if (GameData().unlockBlaster) {
        // Fire towards tap position
        Vector2 tapPos = info.eventPosition.widget;
-       // We need to convert screen coordinates to world coordinates roughly or use direction relative to player
-       // Since camera follows player, we can just use direction from screen center (player) to tap
        Vector2 screenCenter = size / 2;
        Vector2 dir = (tapPos - screenCenter).safeNormalized();
 
@@ -263,89 +313,154 @@ class RpgGame extends FlameGame with PanDetector, TapDetector {
     }
   }
 
+  // --- MULTI-TOUCH INPUT HANDLING ---
+
   @override
-  void onPanStart(DragStartInfo info) {
-    if (gameOver) return; // Game Over handled by overlay now
+  void onDragStart(int pointerId, DragStartInfo info) {
+    if (gameOver) {
+       // Reset Game Logic if needed, or simple restart
+       _resetGame();
+       return;
+    }
 
     final Vector2 startPos = info.eventPosition.widget;
-    _dragStartPos = startPos;
-    _resetGestureLogic(startPos);
+
+    // 1. Assign Movement Pointer (First Touch)
+    if (_movePointerId == null) {
+      _movePointerId = pointerId;
+      _moveStartPos = startPos;
+
+      // Show Joystick
+      joystick.position = startPos;
+      joystick.isVisible = true;
+      joystick.reset();
+    }
+    // 2. Assign Action Pointer (Second Touch)
+    else if (_actionPointerId == null) {
+      _actionPointerId = pointerId;
+      _actionStartPos = startPos;
+      _lastActionPos = startPos;
+      _lastActionTime = DateTime.now();
+      _resetGestureLogic();
+    }
   }
 
   @override
-  void onPanUpdate(DragUpdateInfo info) {
+  void onDragUpdate(int pointerId, DragUpdateInfo info) {
     if (gameOver) return;
 
     final Vector2 currentPos = info.eventPosition.widget;
-    final DateTime now = DateTime.now();
 
-    // 1. Calculate Velocity for DASH (Flick detection)
-    if (_lastInputTime != null && _lastFingerPosition != null) {
-      final double dtSeconds = now.difference(_lastInputTime!).inMicroseconds / 1000000.0;
-      if (dtSeconds > 0) {
-        final double dist = currentPos.distanceTo(_lastFingerPosition!);
-        final double velocity = dist / dtSeconds;
+    // Handle Movement
+    if (pointerId == _movePointerId && _moveStartPos != null) {
+      final Vector2 offset = currentPos - _moveStartPos!;
+      joystick.updateKnob(offset);
 
-        if (velocity > dashVelocityThreshold) {
-          player.dash(currentPos - _lastFingerPosition!);
-        }
-      }
-    }
-
-    // 2. Calculate Angle for SLASH (Circular motion)
-    if (!player.isSlashing && _dragStartPos != null) {
-      final Vector2 center = _dragStartPos!;
-      final Vector2 toFinger = currentPos - center;
-      final Vector2 prevToFinger = (_lastFingerPosition ?? currentPos) - center;
-
-      if (toFinger.length > 20 && prevToFinger.length > 20) {
-        final double currentAngle = atan2(toFinger.y, toFinger.x);
-        final double prevAngle = atan2(prevToFinger.y, prevToFinger.x);
-
-        double diff = currentAngle - prevAngle;
-        while (diff < -pi) diff += 2 * pi;
-        while (diff > pi) diff -= 2 * pi;
-
-        _accumulatedRotation += diff;
-        _slashWindowTimer = _slashTimeWindow;
-
-        if (_accumulatedRotation.abs() > _slashThreshold) {
-          player.slash();
-          _accumulatedRotation = 0.0;
-        }
-      }
-    }
-
-    // 3. Normal Movement (Virtual Joystick Style)
-    if (_dragStartPos != null) {
-      final Vector2 offset = currentPos - _dragStartPos!;
-      if (offset.length > 10) {
-        _handleInput(offset.safeNormalized());
+      if (offset.length > 5) {
+        player.moveDirection = offset.safeNormalized();
       } else {
-        _handleInput(Vector2.zero());
+        player.moveDirection = Vector2.zero();
       }
     }
 
-    _lastFingerPosition = currentPos;
-    _lastInputTime = now;
+    // Handle Actions (Dash/Slash)
+    if (pointerId == _actionPointerId && _lastActionPos != null) {
+      final DateTime now = DateTime.now();
+
+      // 1. Dash (Flick)
+      if (_lastActionTime != null) {
+        final double dtSeconds = now.difference(_lastActionTime!).inMicroseconds / 1000000.0;
+        if (dtSeconds > 0) {
+          final double dist = currentPos.distanceTo(_lastActionPos!);
+          final double velocity = dist / dtSeconds;
+
+          if (velocity > dashVelocityThreshold) {
+            player.dash(currentPos - _lastActionPos!);
+          }
+        }
+      }
+
+      // 2. Slash (Circular)
+      if (!player.isSlashing && _actionStartPos != null) {
+        final Vector2 center = _actionStartPos!;
+        final Vector2 toFinger = currentPos - center;
+        final Vector2 prevToFinger = (_lastActionPos ?? currentPos) - center;
+
+        if (toFinger.length > 20 && prevToFinger.length > 20) {
+          final double currentAngle = atan2(toFinger.y, toFinger.x);
+          final double prevAngle = atan2(prevToFinger.y, prevToFinger.x);
+
+          double diff = currentAngle - prevAngle;
+          while (diff < -pi) diff += 2 * pi;
+          while (diff > pi) diff -= 2 * pi;
+
+          _accumulatedRotation += diff;
+          _slashWindowTimer = _slashTimeWindow;
+
+          if (_accumulatedRotation.abs() > _slashThreshold) {
+            player.slash();
+            _accumulatedRotation = 0.0;
+          }
+        }
+      }
+
+      _lastActionPos = currentPos;
+      _lastActionTime = now;
+    }
   }
 
   @override
-  void onPanEnd(DragEndInfo info) {
-    player.moveDirection = null;
-    _accumulatedRotation = 0.0;
-    _dragStartPos = null;
+  void onDragEnd(int pointerId, DragEndInfo info) {
+    _handleTouchEnd(pointerId);
   }
 
-  void _handleInput(Vector2 dir) {
-    player.moveDirection = dir;
+  @override
+  void onDragCancel(int pointerId) {
+    _handleTouchEnd(pointerId);
   }
 
-  void _resetGestureLogic(Vector2 pos) {
-    _lastFingerPosition = pos;
-    _lastInputTime = DateTime.now();
+  void _handleTouchEnd(int pointerId) {
+    if (pointerId == _movePointerId) {
+      _movePointerId = null;
+      _moveStartPos = null;
+      player.moveDirection = null;
+      joystick.isVisible = false;
+    }
+
+    if (pointerId == _actionPointerId) {
+      _actionPointerId = null;
+      _actionStartPos = null;
+      _lastActionPos = null;
+      _accumulatedRotation = 0.0;
+    }
+  }
+
+  void _resetGestureLogic() {
     _accumulatedRotation = 0.0;
     _slashWindowTimer = _slashTimeWindow;
+  }
+
+  void _resetGame() {
+       gameOver = false;
+       killCount = 0;
+       wave = 1;
+       runGems = 0;
+
+       player.health = player.maxHealth;
+       player.level = 1;
+       player.xp = 0;
+       player.xpToNextLevel = 10;
+       player.damageMult = 1.0;
+
+       player.position = Vector2.zero();
+       world.children.whereType<Enemy>().forEach((e) => e.removeFromParent());
+       world.children.whereType<ParticleSystemComponent>().forEach((e) => e.removeFromParent());
+       world.children.whereType<XpGem>().forEach((e) => e.removeFromParent());
+       world.children.whereType<EnemyProjectile>().forEach((e) => e.removeFromParent());
+
+       hud.storyText.text = "";
+       _spawnWave();
+       overlays.remove('GameOver');
   }
 
   void onGameOver() {
@@ -395,7 +510,7 @@ class Obstacle extends PositionComponent {
 class Player extends PositionComponent with HasGameRef<RpgGame> {
   Vector2? moveDirection;
   static const double _baseSpeed = 200.0;
-  static const double _dashSpeedMult = 3.0;
+  static const double _dashSpeedMult = 4.0; // Increased from 3.0
 
   late int health;
   late int maxHealth;
@@ -412,7 +527,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
   bool isDashing = false;
   double _dashTimer = 0.0;
-  static const double _dashDuration = 0.2;
+  static const double _dashDuration = 0.4; // Increased from 0.2
   double _currentDashCooldown = 0.0;
   Vector2 _dashDirection = Vector2.zero();
 
