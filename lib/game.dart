@@ -421,8 +421,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     maxHealth = 100 + (data.levelHp * 20);
     health = maxHealth;
 
-    // Base dash cooldown 2.0s, reduced by 10% per level
-    dashCooldownMax = 2.0 * pow(0.9, data.levelDash);
+    // Base dash cooldown 0.8s, reduced by 10% per level
+    dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
   }
 
   @override
@@ -439,7 +439,12 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     if (isDashing) {
       _dashTimer -= dt;
-      position.add(_dashDirection * (_baseSpeed * _dashSpeedMult) * dt);
+
+      // Ease-out movement
+      double progress = 1.0 - (_dashTimer / _dashDuration); // 0.0 to 1.0
+      double currentSpeedMult = _dashSpeedMult * (1.0 - Curves.easeOut.transform(progress) * 0.5);
+
+      position.add(_dashDirection * (_baseSpeed * currentSpeedMult) * dt);
 
       // Spawn Trail
       if (_dashTimer % 0.05 < dt) {
