@@ -36,7 +36,7 @@ class VirtualJoystick extends PositionComponent with HasVisibility {
 
   VirtualJoystick() : super(anchor: Anchor.center, size: Vector2.all(100)) {
     isVisible = false;
-    positionType = PositionType.viewport; // Ensure it stays in screen coordinates
+    // positionType removed as it is not needed when added to viewport or using standard PositionComponent defaults in 1.16+
   }
 
   void updateKnob(Vector2 delta) {
@@ -139,7 +139,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     // Add Joystick (On top of HUD or World? HUD is Priority 100. Joystick on top of everything)
     joystick = VirtualJoystick()..priority = 200;
-    add(joystick);
+    cameraComponent.viewport.add(joystick); // Add to viewport so it stays on screen and aligns with widget coordinates
 
     // Initial Wave
     _spawnWave();
