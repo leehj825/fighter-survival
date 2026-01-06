@@ -16,7 +16,7 @@ import 'visual_effects.dart';
 /// Extension for safe vector normalization
 extension SafeVector2 on Vector2 {
   Vector2 safeNormalized() {
-    if (length2 < 1e-6) {
+    if (x.isNaN || y.isNaN || length2 < 1e-6) {
       return Vector2.zero();
     }
     return normalized();
@@ -139,7 +139,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     // Add Joystick (On top of HUD or World? HUD is Priority 100. Joystick on top of everything)
     joystick = VirtualJoystick()..priority = 200;
-    cameraComponent.viewport.add(joystick); // Add to viewport so it stays on screen and aligns with widget coordinates
+    hud.add(joystick); // Add to HUD (Root Component) to ensure screen-space alignment
 
     // Initial Wave
     _spawnWave();
@@ -204,6 +204,11 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
   @override
   void update(double dt) {
+    // Failsafe: Recover from NaN position to prevent freeze
+    if (player.position.x.isNaN || player.position.y.isNaN) {
+      player.position = Vector2(0, 0);
+    }
+
     super.update(dt);
     if (gameOver) return;
 
@@ -259,11 +264,16 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
         double radiusP = (player.size.x / 2) + child.radius;
         if (distP < radiusP) {
           Vector2 dir = player.position - child.position;
-          // Prevent getting stuck if center positions overlap exactly
-          if (dir.length2 < 0.001) dir = Vector2(1, 0);
 
-          Vector2 push = dir.safeNormalized() * (radiusP - distP);
-          player.position += push;
+          if (!dir.x.isNaN && !dir.y.isNaN) {
+             // Prevent getting stuck if center positions overlap exactly
+             if (dir.length2 < 0.001) dir = Vector2(1, 0);
+
+             Vector2 push = dir.safeNormalized() * (radiusP - distP);
+             if (!push.x.isNaN && !push.y.isNaN) {
+                player.position += push;
+             }
+          }
         }
 
         // Enemy vs Obstacle
@@ -273,10 +283,15 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
              double radiusE = (other.size.x / 2) + child.radius;
              if (distE < radiusE) {
                Vector2 dir = other.position - child.position;
-               if (dir.length2 < 0.001) dir = Vector2(1, 0);
 
-               Vector2 push = dir.safeNormalized() * (radiusE - distE);
-               other.position += push;
+               if (!dir.x.isNaN && !dir.y.isNaN) {
+                  if (dir.length2 < 0.001) dir = Vector2(1, 0);
+
+                  Vector2 push = dir.safeNormalized() * (radiusE - distE);
+                  if (!push.x.isNaN && !push.y.isNaN) {
+                     other.position += push;
+                  }
+               }
              }
           }
         }
