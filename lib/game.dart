@@ -13,6 +13,16 @@ import 'hud.dart';
 import 'managers.dart';
 import 'visual_effects.dart';
 
+/// Extension for safe vector normalization
+extension SafeVector2 on Vector2 {
+  Vector2 safeNormalized() {
+    if (length2 == 0) {
+      return Vector2.zero();
+    }
+    return normalized();
+  }
+}
+
 /// The main Game class.
 class RpgGame extends FlameGame with PanDetector, TapDetector {
   late Player player;
@@ -175,7 +185,7 @@ class RpgGame extends FlameGame with PanDetector, TapDetector {
     for (final gem in world.children.whereType<XpGem>()) {
       if (player.position.distanceTo(gem.position) < 100) {
         // Magnet
-        gem.position.add((player.position - gem.position).normalized() * 300 * dt);
+        gem.position.add((player.position - gem.position).safeNormalized() * 300 * dt);
         if (player.position.distanceTo(gem.position) < 10) {
           // In new logic, gems are also currency.
           // We treat "XP Gems" as the currency source for now.
@@ -194,7 +204,7 @@ class RpgGame extends FlameGame with PanDetector, TapDetector {
         double distP = player.position.distanceTo(child.position);
         double radiusP = (player.size.x / 2) + child.radius;
         if (distP < radiusP) {
-          Vector2 push = (player.position - child.position).normalized() * (radiusP - distP);
+          Vector2 push = (player.position - child.position).safeNormalized() * (radiusP - distP);
           player.position += push;
         }
 
@@ -204,7 +214,7 @@ class RpgGame extends FlameGame with PanDetector, TapDetector {
              double distE = other.position.distanceTo(child.position);
              double radiusE = (other.size.x / 2) + child.radius;
              if (distE < radiusE) {
-               Vector2 push = (other.position - child.position).normalized() * (radiusE - distE);
+               Vector2 push = (other.position - child.position).safeNormalized() * (radiusE - distE);
                other.position += push;
              }
           }
@@ -247,7 +257,7 @@ class RpgGame extends FlameGame with PanDetector, TapDetector {
        // We need to convert screen coordinates to world coordinates roughly or use direction relative to player
        // Since camera follows player, we can just use direction from screen center (player) to tap
        Vector2 screenCenter = size / 2;
-       Vector2 dir = (tapPos - screenCenter).normalized();
+       Vector2 dir = (tapPos - screenCenter).safeNormalized();
 
        player.shoot(dir);
     }
@@ -310,7 +320,7 @@ class RpgGame extends FlameGame with PanDetector, TapDetector {
     if (_dragStartPos != null) {
       final Vector2 offset = currentPos - _dragStartPos!;
       if (offset.length > 10) {
-        _handleInput(offset.normalized());
+        _handleInput(offset.safeNormalized());
       } else {
         _handleInput(Vector2.zero());
       }
@@ -441,7 +451,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
       _dashTimer -= dt;
 
       // Ease-out movement
-      double progress = 1.0 - (_dashTimer / _dashDuration); // 0.0 to 1.0
+      double progress = (1.0 - (_dashTimer / _dashDuration)).clamp(0.0, 1.0); // Clamp to prevent <0 or >1
       double currentSpeedMult = _dashSpeedMult * (1.0 - Curves.easeOut.transform(progress) * 0.5);
 
       position.add(_dashDirection * (_baseSpeed * currentSpeedMult) * dt);
@@ -513,7 +523,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     _currentDashCooldown = dashCooldownMax;
 
     if (direction.length > 0) {
-      _dashDirection = direction.normalized();
+      _dashDirection = direction.safeNormalized();
       angle = atan2(_dashDirection.y, _dashDirection.x);
     } else {
       _dashDirection = Vector2(1, 0);
@@ -683,7 +693,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
         if (dir.length < 5) {
           _pickNewTarget();
         } else {
-          position.add(dir.normalized() * _speed * dt);
+          position.add(dir.safeNormalized() * _speed * dt);
         }
       }
     }
@@ -709,7 +719,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
     health -= amount;
     if (knockbackDir != null) {
-       _knockbackVelocity = knockbackDir.normalized() * 400.0;
+       _knockbackVelocity = knockbackDir.safeNormalized() * 400.0;
     }
     _invulnerableTimer = 0.5;
 
@@ -822,7 +832,7 @@ class EnemyProjectile extends PositionComponent with HasGameRef<RpgGame> {
   double _lifeTime = 0.0;
 
   EnemyProjectile(Vector2 pos, Vector2 target)
-      : velocity = (target - pos).normalized() * 300,
+      : velocity = (target - pos).safeNormalized() * 300,
         super(position: pos, size: Vector2.all(10), anchor: Anchor.center);
 
   @override
@@ -882,7 +892,7 @@ class ShooterEnemy extends Enemy {
 
     // Custom movement: maintain distance
     double dist = position.distanceTo(gameRef.player.position);
-    Vector2 dir = (gameRef.player.position - position).normalized();
+    Vector2 dir = (gameRef.player.position - position).safeNormalized();
 
     if (dist < 300) {
        position -= dir * 80 * dt; // Retreat
