@@ -139,7 +139,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     // Add Joystick (On top of HUD or World? HUD is Priority 100. Joystick on top of everything)
     joystick = VirtualJoystick()..priority = 200;
-    hud.add(joystick); // Add to HUD (Root Component) to ensure screen-space alignment
+    cameraComponent.viewport.add(joystick); // Move joystick to Viewport for correct screen-space coordinates
 
     // Initial Wave
     _spawnWave();
