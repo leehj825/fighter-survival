@@ -16,7 +16,7 @@ import 'visual_effects.dart';
 /// Extension for safe vector normalization
 extension SafeVector2 on Vector2 {
   Vector2 safeNormalized() {
-    if (length2 == 0) {
+    if (length2 < 1e-6) {
       return Vector2.zero();
     }
     return normalized();
@@ -138,7 +138,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     // Add Joystick (On top of HUD or World? HUD is Priority 100. Joystick on top of everything)
     joystick = VirtualJoystick()..priority = 200;
-    cameraComponent.viewport.add(joystick); // Add to viewport so it stays on screen
+    cameraComponent.viewport.add(joystick); // Add to viewport so it stays on screen and aligns with widget coordinates
 
     // Initial Wave
     _spawnWave();
@@ -375,8 +375,11 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
           final double dist = currentPos.distanceTo(_lastActionPos!);
           final double velocity = dist / dtSeconds;
 
-          if (velocity > dashVelocityThreshold) {
-            player.dash(currentPos - _lastActionPos!);
+          if (velocity > dashVelocityThreshold && dist > 10) {
+             Vector2 dashDir = currentPos - _lastActionPos!;
+             if (!dashDir.isNaN) {
+                player.dash(dashDir);
+             }
           }
         }
       }
