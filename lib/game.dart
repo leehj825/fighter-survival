@@ -510,7 +510,7 @@ class Obstacle extends PositionComponent {
 class Player extends PositionComponent with HasGameRef<RpgGame> {
   Vector2? moveDirection;
   static const double _baseSpeed = 200.0;
-  static const double _dashSpeedMult = 4.0; // Increased from 3.0
+  static const double _dashSpeedMult = 3.5;
 
   late int health;
   late int maxHealth;
@@ -527,7 +527,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
   bool isDashing = false;
   double _dashTimer = 0.0;
-  static const double _dashDuration = 0.4; // Increased from 0.2
+  static const double _dashDuration = 0.32;
   double _currentDashCooldown = 0.0;
   Vector2 _dashDirection = Vector2.zero();
 
@@ -567,7 +567,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
       // Ease-out movement
       double progress = (1.0 - (_dashTimer / _dashDuration)).clamp(0.0, 1.0); // Clamp to prevent <0 or >1
-      double currentSpeedMult = _dashSpeedMult * (1.0 - Curves.easeOut.transform(progress) * 0.5);
+      // Use easeOutCubic for a sharper drop-off to prevent "bouncy" feeling at end
+      double currentSpeedMult = _dashSpeedMult * (1.0 - Curves.easeOutCubic.transform(progress) * 0.7);
 
       position.add(_dashDirection * (_baseSpeed * currentSpeedMult) * dt);
 
