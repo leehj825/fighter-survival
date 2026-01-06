@@ -14,12 +14,21 @@ import 'visual_effects.dart';
 /// The main Game class.
 class RpgGame extends FlameGame with PanDetector {
   late Player player;
+  late Hud hud;
 
   // Game State
   int killCount = 0;
   int wave = 1;
   double _waveTimer = 0.0;
   bool gameOver = false;
+
+  // Story Data
+  final Map<int, String> storyLog = {
+    1: "SIMULATION INITIALIZED.\nSURVIVE THE SWARM.",
+    3: "THREAT LEVEL RISING.\nHOSTILES ADAPTING.",
+    5: "WARNING: HEAVY SIGNAL.\nELITE UNIT DETECTED.",
+    10: "SYSTEM OVERLOAD.\nTHEY ARE EVERYWHERE.",
+  };
 
   // --- Input State ---
   Vector2? _dragStartPos;
@@ -61,7 +70,8 @@ class RpgGame extends FlameGame with PanDetector {
     add(world);
 
     // Add HUD
-    add(Hud());
+    hud = Hud();
+    add(hud);
 
     // Initial Wave
     _spawnWave();
@@ -83,19 +93,43 @@ class RpgGame extends FlameGame with PanDetector {
     }
   }
 
+  void cameraShake(double intensity) {
+     cameraComponent.viewfinder.add(
+        MoveEffect.by(Vector2(5, 5), EffectController(duration: 0.1, alternate: true, repeatCount: 3))
+     );
+  }
+
   void _spawnWave() {
+    // Story Display
+    if (storyLog.containsKey(wave)) {
+      hud.showStory(storyLog[wave]!);
+    } else {
+      hud.showStory("WAVE $wave");
+    }
+
     final Random rng = Random();
-    int enemyCount = 3 + wave * 2;
+    int enemyCount = 4 + (wave * 1.5).toInt();
+    bool isEliteWave = wave % 5 == 0;
 
     for (int i = 0; i < enemyCount; i++) {
-      Vector2 offset = Vector2(
-        (rng.nextDouble() - 0.5) * 800 + (rng.nextBool() ? 400 : -400),
-        (rng.nextDouble() - 0.5) * 800 + (rng.nextBool() ? 400 : -400),
+      Vector2 pos = player.position + Vector2(
+        (rng.nextDouble() - 0.5) * 800 + (rng.nextBool() ? 500 : -500),
+        (rng.nextDouble() - 0.5) * 800 + (rng.nextBool() ? 500 : -500),
       );
 
-      world.add(Enemy()
-        ..position = player.position + offset
-      );
+      // 20% Shooter chance, or alternating in Elite waves
+      bool isShooter = rng.nextDouble() < 0.2 || (isEliteWave && i % 2 == 0);
+
+      if (isShooter) {
+        world.add(ShooterEnemy()..position = pos);
+      } else {
+        world.add(Enemy()..position = pos);
+      }
+    }
+
+    if (isEliteWave) {
+      // Spawn Boss
+      world.add(Enemy(isElite: true)..position = player.position + Vector2(600, 0));
     }
   }
 
@@ -104,11 +138,12 @@ class RpgGame extends FlameGame with PanDetector {
     super.update(dt);
     if (gameOver) return;
 
-    // Wave Management
+    // Check if ALL enemies are dead (Base Enemy + ShooterEnemy)
     bool enemiesAlive = world.children.whereType<Enemy>().isNotEmpty;
+
     if (!enemiesAlive) {
       _waveTimer += dt;
-      if (_waveTimer > 2.0) {
+      if (_waveTimer > 3.0) {
         wave++;
         _spawnWave();
         _waveTimer = 0.0;
@@ -128,6 +163,18 @@ class RpgGame extends FlameGame with PanDetector {
     for (final child in world.children) {
       if (child is PositionComponent) {
         child.priority = child.position.y.toInt();
+      }
+    }
+
+    // NEW: XP Collection Loop
+    for (final gem in world.children.whereType<XpGem>()) {
+      if (player.position.distanceTo(gem.position) < 100) {
+        // Magnet
+        gem.position.add((player.position - gem.position).normalized() * 300 * dt);
+        if (player.position.distanceTo(gem.position) < 10) {
+          player.gainXp(gem.amount);
+          gem.removeFromParent();
+        }
       }
     }
 
@@ -163,13 +210,13 @@ class RpgGame extends FlameGame with PanDetector {
         final double combinedRadius = (player.size.x / 2) + (enemy.size.x / 2);
 
         // Check DASH Hit
-        if (player.isDashing && dist < combinedRadius) {
-           enemy.takeDamage(2); // Dash deals 2 damage, no knockback
+        if (player.isDashing && dist < (combinedRadius + 10)) {
+           enemy.takeDamage(20 * player.damageMult);
         }
 
         // Check SLASH Hit
         if (player.isSlashing && dist < (combinedRadius + 60)) {
-           enemy.takeDamage(1, knockbackDir: enemy.position - player.position);
+           enemy.takeDamage(10 * player.damageMult, knockbackDir: enemy.position - player.position);
         }
 
         // Check PLAYER DAMAGE Hit
@@ -187,10 +234,20 @@ class RpgGame extends FlameGame with PanDetector {
        gameOver = false;
        killCount = 0;
        wave = 1;
+
        player.health = 100;
+       player.level = 1;
+       player.xp = 0;
+       player.xpToNextLevel = 10;
+       player.damageMult = 1;
+       player.maxHealth = 100;
+
        player.position = Vector2.zero();
        world.children.whereType<Enemy>().forEach((e) => e.removeFromParent());
        world.children.whereType<ParticleSystemComponent>().forEach((e) => e.removeFromParent());
+       world.children.whereType<XpGem>().forEach((e) => e.removeFromParent());
+       world.children.whereType<EnemyProjectile>().forEach((e) => e.removeFromParent());
+
        _spawnWave();
        return;
     }
@@ -320,6 +377,13 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   int health = 100;
   double _damageCooldown = 0.0;
 
+  // Progression Fields
+  int level = 1;
+  int xp = 0;
+  int xpToNextLevel = 10;
+  int maxHealth = 100;
+  int damageMult = 1;
+
   bool isDashing = false;
   double _dashTimer = 0.0;
   static const double _dashDuration = 0.2;
@@ -427,11 +491,35 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     add(sword);
   }
 
+  void gainXp(int amount) {
+    xp += amount;
+    if (xp >= xpToNextLevel) {
+      _levelUp();
+    }
+  }
+
+  void _levelUp() {
+    xp -= xpToNextLevel;
+    level++;
+    xpToNextLevel = (xpToNextLevel * 1.5).toInt();
+
+    // Stats Up
+    damageMult++;
+    maxHealth += 20;
+    health = maxHealth; // Full Heal
+
+    gameRef.hud.showStory("LEVEL UP! SYSTEM UPGRADED.");
+    gameRef.world.add(VisualEffects.createExplosion(position));
+  }
+
+  @override
   void takeDamage(int amount) {
     if (_damageCooldown > 0 || isDashing) return;
 
     health -= amount;
     _damageCooldown = 1.0;
+    gameRef.cameraShake(2.0); // Shake Screen
+    gameRef.world.add(DamageText(amount, position, isCrit: true)); // Show red text
 
     if (health <= 0) {
       health = 0;
@@ -483,10 +571,13 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   double _roamTimer = 0.0;
   Vector2 _knockbackVelocity = Vector2.zero();
   double _invulnerableTimer = 0.0;
+  bool isElite = false;
 
   final Paint _redPaint = Paint()..color = const Color(0xFFFF0000);
 
-  Enemy() : super(size: Vector2.all(40), anchor: Anchor.center);
+  Enemy({this.isElite = false}) : super(size: Vector2.all(isElite ? 80 : 40), anchor: Anchor.center) {
+     if(isElite) health = health * 5;
+  }
 
   @override
   void update(double dt) {
@@ -533,6 +624,9 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   void takeDamage(int amount, {Vector2? knockbackDir}) {
     if (_invulnerableTimer > 0) return;
 
+    // Show Damage Number
+    gameRef.world.add(DamageText(amount, position.clone() + Vector2(0, -30)));
+
     health -= amount;
     if (knockbackDir != null) {
        _knockbackVelocity = knockbackDir.normalized() * 400.0;
@@ -542,13 +636,12 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     if (health <= 0) {
       removeFromParent();
       gameRef.killCount++;
+
+      // Drop XP Gem
+      gameRef.world.add(XpGem(isElite ? 50 : 10)..position = position);
+
       gameRef.world.add(VisualEffects.createExplosion(position));
-      gameRef.cameraComponent.viewfinder.add(
-        MoveEffect.by(
-          Vector2(5, 5),
-          EffectController(duration: 0.1, alternate: true, repeatCount: 3)
-        )
-      );
+      gameRef.cameraShake(1.0); // Slight shake on kill
     }
   }
 
@@ -584,6 +677,146 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     if (_invulnerableTimer > 0) {
        final Paint flashPaint = Paint()..color = const Color(0x88FFFFFF);
        canvas.drawCircle(topCenter, r, flashPaint);
+    }
+  }
+}
+
+class DamageText extends PositionComponent {
+  final int damage;
+  double _lifeTime = 0.0;
+  final bool isCrit;
+
+  DamageText(this.damage, Vector2 pos, {this.isCrit = false}) {
+    position = pos;
+    anchor = Anchor.center;
+    priority = 200;
+  }
+
+  @override
+  void render(Canvas canvas) {
+    final textSpan = TextSpan(
+      text: damage.toString(),
+      style: TextStyle(
+        color: isCrit ? Colors.yellow : Colors.white,
+        fontSize: isCrit ? 26 : 18,
+        fontWeight: FontWeight.bold,
+        shadows: const [Shadow(blurRadius: 2, color: Colors.black, offset: Offset(1, 1))],
+      ),
+    );
+    final tp = TextPainter(text: textSpan, textDirection: TextDirection.ltr);
+    tp.layout();
+    tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    position.y -= 50 * dt;
+    _lifeTime += dt;
+    if (_lifeTime > 0.8) removeFromParent();
+  }
+}
+
+class XpGem extends PositionComponent {
+  final int amount;
+  double _lifeTime = 0.0;
+
+  XpGem(this.amount) : super(size: Vector2.all(10), anchor: Anchor.center);
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawCircle((size / 2).toOffset(), 4, Paint()..color = const Color(0xFF00FF00));
+    canvas.drawCircle((size / 2).toOffset(), 2, Paint()..color = Colors.white);
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _lifeTime += dt;
+    position.y += sin(_lifeTime * 5) * 0.5;
+  }
+}
+
+class EnemyProjectile extends PositionComponent with HasGameRef<RpgGame> {
+  final Vector2 velocity;
+  double _lifeTime = 0.0;
+
+  EnemyProjectile(Vector2 pos, Vector2 target)
+      : velocity = (target - pos).normalized() * 300,
+        super(position: pos, size: Vector2.all(10), anchor: Anchor.center);
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    position += velocity * dt;
+    _lifeTime += dt;
+    if (_lifeTime > 3.0) removeFromParent();
+
+    if (position.distanceTo(gameRef.player.position) < gameRef.player.size.x / 2) {
+      gameRef.player.takeDamage(10);
+      removeFromParent();
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawCircle(Offset.zero, 4, Paint()..color = Colors.purpleAccent);
+  }
+}
+
+class ShooterEnemy extends Enemy {
+  double _shootTimer = 0.0;
+
+  ShooterEnemy() : super();
+
+  @override
+  void render(Canvas canvas) {
+     final Path path = Path();
+     path.moveTo(0, -20);
+     path.lineTo(20, 20);
+     path.lineTo(-20, 20);
+     path.close();
+     canvas.drawPath(path, Paint()..color = Colors.purpleAccent);
+
+     // Add a shadow or highlight to match style
+     canvas.drawPath(path, Paint()..style=PaintingStyle.stroke..color=Colors.white.withOpacity(0.5));
+
+     // Flash
+    if (_invulnerableTimer > 0) {
+       final Paint flashPaint = Paint()..color = const Color(0x88FFFFFF);
+       canvas.drawCircle(Offset.zero, 20, flashPaint); // Simple circle flash for shooter
+    }
+  }
+
+  @override
+  void update(double dt) {
+    // Handle invulnerability and knockback manually since we are overriding Enemy.update
+    if (_invulnerableTimer > 0) {
+      _invulnerableTimer -= dt;
+    }
+
+    if (_knockbackVelocity.length > 5) {
+      position.add(_knockbackVelocity * dt);
+      _knockbackVelocity.scale(0.9);
+      // If knocked back, maybe don't move/shoot? Or just add knockback to movement.
+      // For simplicity, let's let knockback override movement or happen alongside it.
+    }
+
+    // Custom movement: maintain distance
+    double dist = position.distanceTo(gameRef.player.position);
+    Vector2 dir = (gameRef.player.position - position).normalized();
+
+    if (dist < 300) {
+       position -= dir * 80 * dt; // Retreat
+    } else if (dist > 500) {
+       position += dir * 100 * dt; // Chase
+    }
+
+    // Shoot Logic
+    _shootTimer += dt;
+    if (_shootTimer > 2.0) {
+       _shootTimer = 0.0;
+       gameRef.world.add(EnemyProjectile(position, gameRef.player.position));
     }
   }
 }
