@@ -1,55 +1,80 @@
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
-import 'game.dart'; // Changed from main.dart to game.dart
+import 'game.dart';
 
 class Hud extends PositionComponent with HasGameRef<RpgGame> {
   late TextComponent scoreText;
-  late TextComponent waveText;
   late TextComponent healthText;
+  late TextComponent storyText;
 
-  Hud() : super(priority: 100); // Always on top
+  final Paint _barBgPaint = Paint()..color = Colors.grey.withOpacity(0.5);
+  final Paint _barFillPaint = Paint()..color = Colors.cyanAccent;
+
+  Hud() : super(priority: 100);
 
   @override
   Future<void> onLoad() async {
     scoreText = TextComponent(
       text: 'Kills: 0',
-      textRenderer: TextPaint(
-        style: const TextStyle(color: Colors.white, fontSize: 24),
-      ),
+      textRenderer: TextPaint(style: const TextStyle(color: Colors.white, fontSize: 20)),
       position: Vector2(20, 40),
     );
     add(scoreText);
 
-    waveText = TextComponent(
-      text: 'Wave: 1',
-      textRenderer: TextPaint(
-        style: const TextStyle(color: Colors.yellow, fontSize: 24),
-      ),
-      position: Vector2(20, 70),
-    );
-    add(waveText);
-
     healthText = TextComponent(
       text: 'HP: 100',
-      textRenderer: TextPaint(
-        style: const TextStyle(color: Colors.green, fontSize: 24),
-      ),
-      position: Vector2(20, 100),
+      textRenderer: TextPaint(style: const TextStyle(color: Colors.green, fontSize: 20)),
+      position: Vector2(20, 70),
     );
     add(healthText);
+
+    storyText = TextComponent(
+      text: '',
+      anchor: Anchor.bottomCenter,
+      textRenderer: TextPaint(
+        style: TextStyle(
+          color: Colors.yellowAccent,
+          fontSize: 24,
+          fontWeight: FontWeight.bold,
+          backgroundColor: Colors.black.withOpacity(0.5),
+        ),
+      ),
+    );
+    add(storyText);
+  }
+
+  @override
+  void onGameResize(Vector2 size) {
+    super.onGameResize(size);
+    storyText.position = Vector2(size.x / 2, size.y - 50);
+  }
+
+  @override
+  void render(Canvas canvas) {
+    super.render(canvas);
+    final double width = gameRef.size.x - 40;
+    const double height = 10;
+    // Prevent division by zero if game just started
+    final int nextLevel = gameRef.player.xpToNextLevel > 0 ? gameRef.player.xpToNextLevel : 1;
+    final double pct = (gameRef.player.xp / nextLevel).clamp(0.0, 1.0);
+
+    canvas.drawRect(Rect.fromLTWH(20, 10, width, height), _barBgPaint);
+    canvas.drawRect(Rect.fromLTWH(20, 10, width * pct, height), _barFillPaint);
   }
 
   @override
   void update(double dt) {
-    scoreText.text = 'Kills: ${gameRef.killCount}';
-    waveText.text = 'Wave: ${gameRef.wave}';
+    scoreText.text = 'Lv.${gameRef.player.level} | Wave ${gameRef.wave}';
     healthText.text = 'HP: ${gameRef.player.health}';
-
-    if (gameRef.player.health <= 0) {
-      healthText.text = "GAME OVER";
-      healthText.textRenderer = TextPaint(
-        style: const TextStyle(color: Colors.red, fontSize: 32, fontWeight: FontWeight.bold),
-      );
+    if (gameRef.gameOver) {
+      storyText.text = "SIGNAL LOST. TAP TO RESTART.";
     }
+  }
+
+  void showStory(String message) {
+    storyText.text = message;
+    Future.delayed(const Duration(seconds: 4), () {
+      if (storyText.text == message) storyText.text = "";
+    });
   }
 }
