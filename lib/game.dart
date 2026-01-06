@@ -36,6 +36,7 @@ class VirtualJoystick extends PositionComponent with HasVisibility {
 
   VirtualJoystick() : super(anchor: Anchor.center, size: Vector2.all(100)) {
     isVisible = false;
+    positionType = PositionType.viewport; // Ensure it stays in screen coordinates
   }
 
   void updateKnob(Vector2 delta) {
@@ -138,7 +139,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     // Add Joystick (On top of HUD or World? HUD is Priority 100. Joystick on top of everything)
     joystick = VirtualJoystick()..priority = 200;
-    cameraComponent.viewport.add(joystick); // Add to viewport so it stays on screen and aligns with widget coordinates
+    add(joystick);
 
     // Initial Wave
     _spawnWave();
@@ -257,7 +258,11 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
         double distP = player.position.distanceTo(child.position);
         double radiusP = (player.size.x / 2) + child.radius;
         if (distP < radiusP) {
-          Vector2 push = (player.position - child.position).safeNormalized() * (radiusP - distP);
+          Vector2 dir = player.position - child.position;
+          // Prevent getting stuck if center positions overlap exactly
+          if (dir.length2 < 0.001) dir = Vector2(1, 0);
+
+          Vector2 push = dir.safeNormalized() * (radiusP - distP);
           player.position += push;
         }
 
@@ -267,7 +272,10 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
              double distE = other.position.distanceTo(child.position);
              double radiusE = (other.size.x / 2) + child.radius;
              if (distE < radiusE) {
-               Vector2 push = (other.position - child.position).safeNormalized() * (radiusE - distE);
+               Vector2 dir = other.position - child.position;
+               if (dir.length2 < 0.001) dir = Vector2(1, 0);
+
+               Vector2 push = dir.safeNormalized() * (radiusE - distE);
                other.position += push;
              }
           }
