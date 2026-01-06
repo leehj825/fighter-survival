@@ -55,12 +55,18 @@ class VirtualJoystick extends PositionComponent with HasVisibility {
   void render(Canvas canvas) {
     if (!isVisible) return;
 
-    // Draw Base
+    // Fix: Shift origin to center of the component so visuals align with the touch point
+    canvas.save();
+    canvas.translate(size.x / 2, size.y / 2);
+
+    // Draw Base (centered)
     canvas.drawCircle(Offset.zero, baseRadius, _basePaint);
     canvas.drawCircle(Offset.zero, baseRadius, _baseStroke);
 
-    // Draw Knob
+    // Draw Knob (relative to center)
     canvas.drawCircle(_knobPos.toOffset(), knobRadius, _knobPaint);
+
+    canvas.restore();
   }
 }
 
@@ -139,7 +145,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     // Add Joystick (On top of HUD or World? HUD is Priority 100. Joystick on top of everything)
     joystick = VirtualJoystick()..priority = 200;
-    cameraComponent.viewport.add(joystick); // Move joystick to Viewport for correct screen-space coordinates
+    hud.add(joystick); // Add to HUD (Root Component) to ensure screen-space alignment
 
     // Initial Wave
     _spawnWave();
@@ -162,9 +168,12 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   }
 
   void cameraShake(double intensity) {
+     // Fix: Remove existing shakes to prevent effect stacking which causes freezes
+     cameraComponent.children.whereType<MoveEffect>().forEach((e) => e.removeFromParent());
+
      // Apply shake to the CameraComponent itself to avoid conflict with Viewfinder.follow()
      cameraComponent.add(
-        MoveEffect.by(Vector2(5, 5), EffectController(duration: 0.1, alternate: true, repeatCount: 4))
+        MoveEffect.by(Vector2(5, 5) * intensity, EffectController(duration: 0.1, alternate: true, repeatCount: 4))
      );
   }
 
@@ -855,7 +864,8 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   }
 
   void takeDamage(int amount, {Vector2? knockbackDir}) {
-    if (_invulnerableTimer > 0) return;
+    // Fix: Prevent processing damage on already dead enemies
+    if (health <= 0 || _invulnerableTimer > 0) return;
 
     // Show Damage Number
     gameRef.world.add(DamageText(amount, position.clone() + Vector2(0, -30)));
@@ -867,6 +877,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     _invulnerableTimer = 0.5;
 
     if (health <= 0) {
+      health = 0; // Clamp
       removeFromParent();
       gameRef.killCount++;
 
@@ -874,7 +885,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       gameRef.world.add(XpGem(isElite ? 50 : 10)..position = position);
 
       gameRef.world.add(VisualEffects.createExplosion(position));
-      gameRef.cameraShake(1.0); // Slight shake on kill
+      gameRef.cameraShake(1.0);
     }
   }
 
