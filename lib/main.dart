@@ -37,11 +37,12 @@ class _MainMenuState extends State<MainMenu> {
   void _startGame() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => GameWidget(
-          game: RpgGame(),
-          overlayBuilderMap: {
-            'GameOver': (BuildContext context, RpgGame game) {
-              return Center(
+        builder: (context) => SafeArea(
+          child: GameWidget(
+            game: RpgGame(),
+            overlayBuilderMap: {
+              'GameOver': (BuildContext context, RpgGame game) {
+                return Center(
                 child: Container(
                   padding: const EdgeInsets.all(20),
                   color: Colors.black.withOpacity(0.8),
@@ -60,11 +61,12 @@ class _MainMenuState extends State<MainMenu> {
                         child: const Text("Return to Menu"),
                       ),
                     ],
+                    ),
                   ),
-                ),
-              );
-            }
-          },
+                );
+              }
+            },
+          ),
         ),
       ),
     );

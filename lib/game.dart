@@ -162,7 +162,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
   void cameraShake(double intensity) {
      cameraComponent.viewfinder.add(
-        MoveEffect.by(Vector2(5, 5), EffectController(duration: 0.1, alternate: true, repeatCount: 3))
+        MoveEffect.by(Vector2(5, 5), EffectController(duration: 0.1, alternate: true, repeatCount: 4))
      );
   }
 
