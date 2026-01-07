@@ -21,25 +21,11 @@ class GridBackground extends PositionComponent with HasGameRef<RpgGame> {
     final double top = (visibleRect.top ~/ 50) * 50.0 - 50;
     final double bottom = visibleRect.bottom + 50;
 
-    // Calculate warp direction (opposite to movement)
-    // Scale it to make the effect visible but not overwhelming
-    final Vector2 warpDir = (gameRef.player.moveDirection ?? Vector2.zero()) * -30.0;
-
-    // Vertical Lines (Warped)
     for (double x = left; x <= right; x += 50) {
-      final Path path = Path();
-      path.moveTo(x, top);
-      // Control point offset by warpDir
-      path.quadraticBezierTo(x + warpDir.x, (top + bottom) / 2 + warpDir.y, x, bottom);
-      canvas.drawPath(path, _gridPaint);
+      canvas.drawLine(Offset(x, top), Offset(x, bottom), _gridPaint);
     }
-
-    // Horizontal Lines (Warped)
     for (double y = top; y <= bottom; y += 50) {
-      final Path path = Path();
-      path.moveTo(left, y);
-      path.quadraticBezierTo((left + right) / 2 + warpDir.x, y + warpDir.y, right, y);
-      canvas.drawPath(path, _gridPaint);
+      canvas.drawLine(Offset(left, y), Offset(right, y), _gridPaint);
     }
   }
 }
