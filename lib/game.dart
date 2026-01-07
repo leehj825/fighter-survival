@@ -129,8 +129,10 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     player = Player()..anchor = Anchor.center;
     world.add(player);
 
-    // Add Orbital Shield
-    world.add(OrbitalShield(player));
+    // Add Orbital Shield (If Unlocked/Leveled)
+    if (GameData().levelShield > 0) {
+      world.add(OrbitalShield(player));
+    }
 
     // Add Infinite Background (Grid)
     world.add(GridBackground());
@@ -563,10 +565,19 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
        world.children.whereType<EnemyProjectile>().forEach((e) => e.removeFromParent());
        world.children.whereType<Barrel>().forEach((e) => e.removeFromParent());
        world.children.whereType<MagnetItem>().forEach((e) => e.removeFromParent());
+       world.children.whereType<Obstacle>().forEach((e) => e.removeFromParent());
+       world.children.whereType<SpikeTrap>().forEach((e) => e.removeFromParent());
+       world.children.whereType<OrbitalShield>().forEach((e) => e.removeFromParent());
 
        hud.storyText.text = "";
        _spawnWave();
        _spawnObstacles(); // Respawn obstacles and barrels
+
+       // Respawn Shield with current stats
+       if (GameData().levelShield > 0) {
+         world.add(OrbitalShield(player));
+       }
+
        overlays.remove('GameOver');
   }
 
@@ -1274,9 +1285,20 @@ class OrbitalShield extends PositionComponent with HasGameRef<RpgGame> {
   final Player _player;
   double _angle = 0.0;
   final double _orbitRadius = 80.0;
-  final double _orbitSpeed = 2.0;
+  late double _orbitSpeed;
+  late int _damage;
 
   OrbitalShield(this._player) : super(size: Vector2.all(20), anchor: Anchor.center);
+
+  @override
+  Future<void> onLoad() async {
+     super.onLoad();
+     final int level = GameData().levelShield;
+     // Base speed 2.0, +0.5 per level beyond 1
+     _orbitSpeed = 2.0 + (level - 1) * 0.5;
+     // Base damage 10, +5 per level beyond 1
+     _damage = 10 + (level - 1) * 5;
+  }
 
   @override
   void update(double dt) {
@@ -1293,7 +1315,7 @@ class OrbitalShield extends PositionComponent with HasGameRef<RpgGame> {
     for (final child in gameRef.world.children) {
       if (child is Enemy) {
         if (child.position.distanceTo(position) < (child.size.x / 2 + size.x / 2)) {
-           child.takeDamage(10, knockbackDir: child.position - _player.position);
+           child.takeDamage(_damage, knockbackDir: child.position - _player.position);
         }
       } else if (child is EnemyProjectile) {
         if (child.position.distanceTo(position) < (child.size.x / 2 + size.x / 2)) {

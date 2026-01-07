@@ -172,6 +172,18 @@ class _WorkshopDialogState extends State<WorkshopDialog> {
                }
              ),
 
+             // Shield Upgrade
+             _buildUpgradeRow(
+               "Orbital Shield (Lvl ${data.levelShield})",
+               data.levelShield == 0 ? "Unlocks Shield" : "Upgrades Shield",
+               data.shieldUpgradeCost,
+               () {
+                 setState(() {
+                   data.buyShieldUpgrade();
+                 });
+               }
+             ),
+
              // Blaster Unlock
              _buildUnlockRow(
                "Blaster Cannon",
@@ -203,8 +215,11 @@ class _WorkshopDialogState extends State<WorkshopDialog> {
       margin: const EdgeInsets.symmetric(vertical: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 10,
+        runSpacing: 10,
         children: [
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -229,8 +244,11 @@ class _WorkshopDialogState extends State<WorkshopDialog> {
       margin: const EdgeInsets.symmetric(vertical: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 10,
+        runSpacing: 10,
         children: [
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,

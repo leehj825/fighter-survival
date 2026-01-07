@@ -13,6 +13,7 @@ class GameData extends ChangeNotifier {
   int totalGems = 0;
   int levelHp = 0; // +20 HP per level
   int levelDash = 0; // -10% Cooldown per level
+  int levelShield = 0; // Unlocks/Upgrades Shield
   bool unlockBlaster = false;
 
   Future<void> init() async {
@@ -24,6 +25,7 @@ class GameData extends ChangeNotifier {
     totalGems = _prefs.getInt('totalGems') ?? 0;
     levelHp = _prefs.getInt('levelHp') ?? 0;
     levelDash = _prefs.getInt('levelDash') ?? 0;
+    levelShield = _prefs.getInt('levelShield') ?? 0;
     unlockBlaster = _prefs.getBool('unlockBlaster') ?? false;
     notifyListeners();
   }
@@ -32,6 +34,7 @@ class GameData extends ChangeNotifier {
     await _prefs.setInt('totalGems', totalGems);
     await _prefs.setInt('levelHp', levelHp);
     await _prefs.setInt('levelDash', levelDash);
+    await _prefs.setInt('levelShield', levelShield);
     await _prefs.setBool('unlockBlaster', unlockBlaster);
     notifyListeners();
   }
@@ -40,6 +43,7 @@ class GameData extends ChangeNotifier {
 
   int get hpUpgradeCost => 100 * (levelHp + 1);
   int get dashUpgradeCost => 150 * (levelDash + 1);
+  int get shieldUpgradeCost => 200 * (levelShield + 1);
   static const int blasterCost = 500;
 
   bool buyHpUpgrade() {
@@ -56,6 +60,16 @@ class GameData extends ChangeNotifier {
     if (totalGems >= dashUpgradeCost) {
       totalGems -= dashUpgradeCost;
       levelDash++;
+      save();
+      return true;
+    }
+    return false;
+  }
+
+  bool buyShieldUpgrade() {
+    if (totalGems >= shieldUpgradeCost) {
+      totalGems -= shieldUpgradeCost;
+      levelShield++;
       save();
       return true;
     }
