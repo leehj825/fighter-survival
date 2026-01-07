@@ -83,12 +83,14 @@ class _MainMenuState extends State<MainMenu> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.blueGrey.shade900,
-      body: Center(
+      body: Container(
+        width: double.infinity,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const Text(
               "FIGHTER SURVIVAL",
+              textAlign: TextAlign.center,
               style: TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.cyanAccent),
             ),
             const SizedBox(height: 10),
@@ -137,11 +139,12 @@ class _WorkshopDialogState extends State<WorkshopDialog> {
       backgroundColor: Colors.grey.shade900,
       child: Padding(
         padding: const EdgeInsets.all(20.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-             const Text("WORKSHOP", style: TextStyle(fontSize: 30, color: Colors.white)),
-             const SizedBox(height: 20),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+               const Text("WORKSHOP", style: TextStyle(fontSize: 30, color: Colors.white)),
+               const SizedBox(height: 20),
              Text("Gems: ${data.totalGems}", style: const TextStyle(fontSize: 24, color: Colors.amber)),
              const SizedBox(height: 30),
 
@@ -172,7 +175,7 @@ class _WorkshopDialogState extends State<WorkshopDialog> {
              // Blaster Unlock
              _buildUnlockRow(
                "Blaster Cannon",
-               "Tap to Shoot",
+               "Hold Right Stick to Aim, Release to Shoot",
                GameData.blasterCost,
                data.unlockBlaster,
                () {
@@ -187,7 +190,8 @@ class _WorkshopDialogState extends State<WorkshopDialog> {
                onPressed: () => Navigator.of(context).pop(),
                child: const Text("BACK", style: TextStyle(color: Colors.white, fontSize: 18)),
              ),
-          ],
+            ],
+          ),
         ),
       ),
     );

@@ -340,19 +340,17 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     }
   }
 
-  // --- TAP TO SHOOT (If Blaster Unlocked) ---
+  // --- TAP TO USE EMP ---
   @override
   void onTapDown(TapDownInfo info) {
     if (gameOver) return;
 
-    // Check if blaster is unlocked
-    if (GameData().unlockBlaster) {
-       // Fire towards tap position
-       Vector2 tapPos = info.eventPosition.widget;
-       Vector2 screenCenter = size / 2;
-       Vector2 dir = (tapPos - screenCenter).safeNormalized();
+    // Check for EMP Button Tap
+    final Vector2 screenPos = info.eventPosition.widget;
+    final double dist = screenPos.distanceTo(hud.btnPos);
 
-       player.shoot(dir);
+    if (dist < hud.btnRadius) {
+       player.triggerUlt();
     }
   }
 
@@ -368,23 +366,29 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     final Vector2 startPos = info.eventPosition.widget;
 
-    // 1. Assign Movement Pointer (First Touch)
-    if (_movePointerId == null) {
-      _movePointerId = pointerId;
-      _moveStartPos = startPos;
+    // Check which side of the screen
+    if (startPos.x < size.x / 2) {
+      // Left Side -> Movement
+      if (_movePointerId == null) {
+        _movePointerId = pointerId;
+        _moveStartPos = startPos;
 
-      // Show Joystick
-      joystick.position = startPos;
-      joystick.isVisible = true;
-      joystick.reset();
-    }
-    // 2. Assign Action Pointer (Second Touch)
-    else if (_actionPointerId == null) {
-      _actionPointerId = pointerId;
-      _actionStartPos = startPos;
-      _lastActionPos = startPos;
-      _lastActionTime = DateTime.now();
-      _resetGestureLogic();
+        joystick.position = startPos;
+        joystick.isVisible = true;
+        joystick.reset();
+      }
+    } else {
+      // Right Side -> Aim (Twin Stick)
+      if (_aimPointerId == null && GameData().unlockBlaster) {
+        _aimPointerId = pointerId;
+        _aimStartPos = startPos;
+
+        aimJoystick.position = startPos;
+        aimJoystick.isVisible = true;
+        aimJoystick.reset();
+
+        player.showAimLine(true);
+      }
     }
   }
 
@@ -406,52 +410,15 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       }
     }
 
-    // Handle Actions (Dash/Slash)
-    if (pointerId == _actionPointerId && _lastActionPos != null) {
-      final DateTime now = DateTime.now();
+    // Handle Aiming
+    if (pointerId == _aimPointerId && _aimStartPos != null) {
+      final Vector2 offset = currentPos - _aimStartPos!;
+      aimJoystick.updateKnob(offset);
 
-      // 1. Dash (Flick)
-      if (_lastActionTime != null) {
-        final double dtSeconds = now.difference(_lastActionTime!).inMicroseconds / 1000000.0;
-        if (dtSeconds > 0) {
-          final double dist = currentPos.distanceTo(_lastActionPos!);
-          final double velocity = dist / dtSeconds;
-
-          if (velocity > dashVelocityThreshold && dist > 10) {
-             Vector2 dashDir = currentPos - _lastActionPos!;
-             if (!dashDir.isNaN) {
-                player.dash(dashDir);
-             }
-          }
-        }
+      if (offset.length > 5) {
+        Vector2 aimDir = offset.safeNormalized();
+        player.updateAimAngle(aimDir);
       }
-
-      // 2. Slash (Circular)
-      if (!player.isSlashing && _actionStartPos != null) {
-        final Vector2 center = _actionStartPos!;
-        final Vector2 toFinger = currentPos - center;
-        final Vector2 prevToFinger = (_lastActionPos ?? currentPos) - center;
-
-        if (toFinger.length > 20 && prevToFinger.length > 20) {
-          final double currentAngle = atan2(toFinger.y, toFinger.x);
-          final double prevAngle = atan2(prevToFinger.y, prevToFinger.x);
-
-          double diff = currentAngle - prevAngle;
-          while (diff < -pi) diff += 2 * pi;
-          while (diff > pi) diff -= 2 * pi;
-
-          _accumulatedRotation += diff;
-          _slashWindowTimer = _slashTimeWindow;
-
-          if (_accumulatedRotation.abs() > _slashThreshold) {
-            player.slash();
-            _accumulatedRotation = 0.0;
-          }
-        }
-      }
-
-      _lastActionPos = currentPos;
-      _lastActionTime = now;
     }
   }
 
@@ -473,11 +440,20 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       joystick.isVisible = false;
     }
 
-    if (pointerId == _actionPointerId) {
-      _actionPointerId = null;
-      _actionStartPos = null;
-      _lastActionPos = null;
-      _accumulatedRotation = 0.0;
+    if (pointerId == _aimPointerId) {
+      // Release to shoot
+      if (_aimStartPos != null) {
+         // Use player's current aim direction
+         // Only shoot if we had a valid direction?
+         // For now, assume player angle is set correctly by updateAimAngle
+         Vector2 shootDir = Vector2(cos(player.angle), sin(player.angle));
+         player.shoot(shootDir);
+      }
+
+      _aimPointerId = null;
+      _aimStartPos = null;
+      aimJoystick.isVisible = false;
+      player.showAimLine(false);
     }
   }
 
