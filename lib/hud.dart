@@ -2,7 +2,37 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'game.dart';
 
+class RotateButton extends PositionComponent {
+  final Paint _bgPaint = Paint()..color = Colors.white.withOpacity(0.3);
+  final Paint _iconPaint = Paint()
+    ..color = Colors.white
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 3;
+
+  RotateButton() : super(size: Vector2.all(50), anchor: Anchor.center);
+
+  @override
+  void render(Canvas canvas) {
+    // Draw button background
+    canvas.drawCircle(Offset(size.x / 2, size.y / 2), size.x / 2, _bgPaint);
+
+    // Draw rotate icon (simple arrow curve)
+    final Rect rect = Rect.fromCenter(center: Offset(size.x/2, size.y/2), width: 30, height: 30);
+    canvas.drawArc(rect, 0.2, 5, false, _iconPaint);
+
+    // Arrowhead
+    final Path path = Path();
+    path.moveTo(size.x/2 + 15, size.y/2);
+    path.lineTo(size.x/2 + 20, size.y/2 + 5);
+    path.lineTo(size.x/2 + 10, size.y/2 + 5);
+    path.close();
+    canvas.drawPath(path, Paint()..color = Colors.white);
+  }
+}
+
 class Hud extends PositionComponent with HasGameRef<RpgGame> {
+  late RotateButton rotateButton;
+
   final TextComponent scoreText = TextComponent(
     text: 'Kills: 0',
     textRenderer: TextPaint(style: const TextStyle(color: Colors.white, fontSize: 20)),
@@ -38,12 +68,17 @@ class Hud extends PositionComponent with HasGameRef<RpgGame> {
     add(scoreText);
     add(healthText);
     add(storyText);
+
+    rotateButton = RotateButton();
+    add(rotateButton);
   }
 
   @override
   void onGameResize(Vector2 size) {
     super.onGameResize(size);
     storyText.position = Vector2(size.x / 2, size.y - 50);
+    // Position rotate button top-right with margin
+    rotateButton.position = Vector2(size.x - 40, 40);
   }
 
   @override

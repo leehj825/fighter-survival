@@ -176,6 +176,19 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     _shakeIntensity = intensity;
   }
 
+  void rotateCamera() {
+    // Rotate 90 degrees clockwise (pi/2)
+    cameraComponent.viewfinder.add(
+      RotateEffect.by(
+        pi / 2,
+        EffectController(
+          duration: 0.3,
+          curve: Curves.easeInOut,
+        ),
+      ),
+    );
+  }
+
   void _spawnWave() {
     // Story Display
     if (storyLog.containsKey(wave)) {
@@ -345,12 +358,31 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   void onTapDown(TapDownInfo info) {
     if (gameOver) return;
 
+    // Check for Rotate Button Tap
+    // Since RpgGame uses TapDetector, we manually check if the tap hit the button in the HUD
+    final Vector2 screenPos = info.eventPosition.widget;
+    // Rotate Button is in HUD. HUD is at (0,0) in screen coordinates usually.
+    // Button position is relative to HUD.
+    // Button anchor is center.
+    final Vector2 btnPos = hud.rotateButton.position;
+    final Vector2 btnSize = hud.rotateButton.size;
+    final Rect btnRect = Rect.fromCenter(
+       center: btnPos.toOffset(), width: btnSize.x, height: btnSize.y
+    );
+
+    if (btnRect.contains(screenPos.toOffset())) {
+       rotateCamera();
+       return;
+    }
+
     // Check if blaster is unlocked
     if (GameData().unlockBlaster) {
        // Fire towards tap position
        Vector2 tapPos = info.eventPosition.widget;
        Vector2 screenCenter = size / 2;
+       // We must rotate the input vector by the camera angle to match world space
        Vector2 dir = (tapPos - screenCenter).safeNormalized();
+       dir.rotate(cameraComponent.viewfinder.angle);
 
        player.shoot(dir);
     }
@@ -400,7 +432,10 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       joystick.updateKnob(offset);
 
       if (offset.length > 5) {
-        player.moveDirection = offset.safeNormalized();
+        // Rotate input to match camera angle
+        Vector2 worldDir = offset.safeNormalized();
+        worldDir.rotate(cameraComponent.viewfinder.angle);
+        player.moveDirection = worldDir;
       } else {
         player.moveDirection = Vector2.zero();
       }
@@ -516,12 +551,19 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   }
 }
 
-class Obstacle extends PositionComponent {
+class Obstacle extends PositionComponent with HasGameRef<RpgGame> {
   final double radius;
   final double height;
   final Paint _paint = Paint()..color = Colors.grey;
 
   Obstacle({required this.radius, required this.height}) : super(anchor: Anchor.center, size: Vector2.all(radius * 2));
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    // Billboard: Counter-rotate against camera to stay "upright" relative to screen
+    angle = -gameRef.cameraComponent.viewfinder.angle;
+  }
 
   @override
   void render(Canvas canvas) {
@@ -599,6 +641,11 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   @override
   void update(double dt) {
     super.update(dt);
+
+    // Billboard Player if NOT dashing (Dashing uses angle for direction)
+    if (!isDashing) {
+      angle = -gameRef.cameraComponent.viewfinder.angle;
+    }
 
     if (_damageCooldown > 0) {
       _damageCooldown -= dt;
@@ -835,6 +882,9 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   void update(double dt) {
     super.update(dt);
 
+    // Billboard
+    angle = -gameRef.cameraComponent.viewfinder.angle;
+
     if (_invulnerableTimer > 0) {
       _invulnerableTimer -= dt;
     }
@@ -935,7 +985,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   }
 }
 
-class DamageText extends PositionComponent {
+class DamageText extends PositionComponent with HasGameRef<RpgGame> {
   final int damage;
   double _lifeTime = 0.0;
   final bool isCrit;
@@ -965,7 +1015,16 @@ class DamageText extends PositionComponent {
   @override
   void update(double dt) {
     super.update(dt);
-    position.y -= 50 * dt;
+
+    // Billboard so text is always upright
+    angle = -gameRef.cameraComponent.viewfinder.angle;
+
+    // Move "Up" relative to the screen (not the world)
+    // Screen Up is (0, -1). We rotate this vector by the camera angle to find the world direction.
+    Vector2 upDir = Vector2(0, -1)..rotate(gameRef.cameraComponent.viewfinder.angle);
+
+    position += upDir * 50 * dt;
+
     _lifeTime += dt;
     if (_lifeTime > 0.8) removeFromParent();
   }
@@ -1044,6 +1103,9 @@ class ShooterEnemy extends Enemy {
 
   @override
   void update(double dt) {
+    // Billboard
+    angle = -gameRef.cameraComponent.viewfinder.angle;
+
     // Handle invulnerability and knockback manually since we are overriding Enemy.update
     if (_invulnerableTimer > 0) {
       _invulnerableTimer -= dt;
