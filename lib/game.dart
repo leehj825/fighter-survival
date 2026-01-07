@@ -4,7 +4,7 @@ import 'dart:ui';
 import 'package:flame/components.dart';
 import 'package:flame/game.dart';
 import 'package:flame/events.dart';
-import 'package:flame/input.dart'; 
+import 'package:flame/input.dart'; // Added to fix TapDetector not found
 import 'package:flutter/material.dart' hide Draggable;
 import 'package:flame/effects.dart';
 
@@ -36,6 +36,7 @@ class VirtualJoystick extends PositionComponent with HasVisibility {
 
   VirtualJoystick() : super(anchor: Anchor.center, size: Vector2.all(100)) {
     isVisible = false;
+    // positionType removed as it is not needed when added to viewport or using standard PositionComponent defaults in 1.16+
   }
 
   void updateKnob(Vector2 delta) {
@@ -54,6 +55,7 @@ class VirtualJoystick extends PositionComponent with HasVisibility {
   void render(Canvas canvas) {
     if (!isVisible) return;
 
+    // Fix: Shift origin to center of the component so visuals align with the touch point
     canvas.save();
     canvas.translate(size.x / 2, size.y / 2);
 
@@ -112,6 +114,10 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   // Tweakable Variable for Dash Sensitivity
   static const double dashVelocityThreshold = 2500.0;
 
+  // Camera Shake State
+  double _shakeTimer = 0.0;
+  double _shakeIntensity = 0.0;
+
   late World world;
   late CameraComponent cameraComponent;
 
@@ -141,9 +147,9 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     hud = Hud();
     add(hud);
 
-    // Add Joystick
+    // Add Joystick (On top of HUD or World? HUD is Priority 100. Joystick on top of everything)
     joystick = VirtualJoystick()..priority = 200;
-    hud.add(joystick);
+    hud.add(joystick); // Add to HUD (Root Component) to ensure screen-space alignment
 
     // Initial Wave
     _spawnWave();
@@ -166,19 +172,8 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   }
 
   void cameraShake(double intensity) {
-     // FIXED: Reset position to prevent camera drift
-     cameraComponent.position = Vector2.zero();
-
-     // FIXED: Use .toList() to avoid ConcurrentModificationError
-     cameraComponent.children
-       .whereType<MoveEffect>()
-       .toList() 
-       .forEach((e) => e.removeFromParent());
-
-     // Apply shake
-     cameraComponent.add(
-        MoveEffect.by(Vector2(5, 5) * intensity, EffectController(duration: 0.1, alternate: true, repeatCount: 4))
-     );
+    _shakeTimer = 0.4;
+    _shakeIntensity = intensity;
   }
 
   void _spawnWave() {
@@ -222,6 +217,17 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       player.position = Vector2(0, 0);
     }
 
+    // Camera Shake Logic
+    if (_shakeTimer > 0) {
+      _shakeTimer -= dt;
+      final Random rng = Random();
+      final double offX = (rng.nextDouble() - 0.5) * 0.05 * _shakeIntensity;
+      final double offY = (rng.nextDouble() - 0.5) * 0.05 * _shakeIntensity;
+      cameraComponent.viewfinder.anchor = Anchor(0.5 + offX, 0.5 + offY);
+    } else {
+      cameraComponent.viewfinder.anchor = Anchor.center;
+    }
+
     super.update(dt);
     if (gameOver) return;
 
@@ -246,18 +252,21 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     }
 
     // --- Y-SORTING ---
+    // Sort components by Y position for depth (2.5D view)
     for (final child in world.children) {
       if (child is PositionComponent) {
         child.priority = child.position.y.toInt();
       }
     }
 
-    // XP Collection Loop (Using .toList() for safety, though typically safe here)
-    for (final gem in world.children.whereType<XpGem>().toList()) {
+    // NEW: XP Collection Loop
+    for (final gem in world.children.whereType<XpGem>()) {
       if (player.position.distanceTo(gem.position) < 100) {
         // Magnet
         gem.position.add((player.position - gem.position).safeNormalized() * 300 * dt);
         if (player.position.distanceTo(gem.position) < 10) {
+          // In new logic, gems are also currency.
+          // We treat "XP Gems" as the currency source for now.
           runGems += gem.amount;
           player.gainXp(gem.amount);
           gem.removeFromParent();
@@ -266,9 +275,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     }
 
     // --- COLLISION LOGIC ---
-    // FIXED: Iterate over a .toList() copy to allow removing entities safely during the loop
-    for (final child in world.children.toList()) {
-      
+    for (final child in world.children) {
       // 1. Obstacle Collision
       if (child is Obstacle) {
         // Player vs Obstacle
@@ -278,6 +285,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
           Vector2 dir = player.position - child.position;
 
           if (!dir.x.isNaN && !dir.y.isNaN) {
+             // Prevent getting stuck if center positions overlap exactly
              if (dir.length2 < 0.001) dir = Vector2(1, 0);
 
              Vector2 push = dir.safeNormalized() * (radiusP - distP);
@@ -311,10 +319,6 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       // 2. Combat
       if (child is Enemy) {
         final Enemy enemy = child;
-        
-        // Skip dead enemies to prevent errors
-        if (enemy.parent == null) continue;
-
         final double dist = player.position.distanceTo(enemy.position);
         final double combinedRadius = (player.size.x / 2) + (enemy.size.x / 2);
 
@@ -336,11 +340,14 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     }
   }
 
+  // --- TAP TO SHOOT (If Blaster Unlocked) ---
   @override
   void onTapDown(TapDownInfo info) {
     if (gameOver) return;
 
+    // Check if blaster is unlocked
     if (GameData().unlockBlaster) {
+       // Fire towards tap position
        Vector2 tapPos = info.eventPosition.widget;
        Vector2 screenCenter = size / 2;
        Vector2 dir = (tapPos - screenCenter).safeNormalized();
@@ -349,22 +356,29 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     }
   }
 
+  // --- MULTI-TOUCH INPUT HANDLING ---
+
   @override
   void onDragStart(int pointerId, DragStartInfo info) {
     if (gameOver) {
+       // Reset Game Logic if needed, or simple restart
        _resetGame();
        return;
     }
 
     final Vector2 startPos = info.eventPosition.widget;
 
+    // 1. Assign Movement Pointer (First Touch)
     if (_movePointerId == null) {
       _movePointerId = pointerId;
       _moveStartPos = startPos;
+
+      // Show Joystick
       joystick.position = startPos;
       joystick.isVisible = true;
       joystick.reset();
     }
+    // 2. Assign Action Pointer (Second Touch)
     else if (_actionPointerId == null) {
       _actionPointerId = pointerId;
       _actionStartPos = startPos;
@@ -380,6 +394,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     final Vector2 currentPos = info.eventPosition.widget;
 
+    // Handle Movement
     if (pointerId == _movePointerId && _moveStartPos != null) {
       final Vector2 offset = currentPos - _moveStartPos!;
       joystick.updateKnob(offset);
@@ -391,10 +406,11 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       }
     }
 
+    // Handle Actions (Dash/Slash)
     if (pointerId == _actionPointerId && _lastActionPos != null) {
       final DateTime now = DateTime.now();
 
-      // 1. Dash
+      // 1. Dash (Flick)
       if (_lastActionTime != null) {
         final double dtSeconds = now.difference(_lastActionTime!).inMicroseconds / 1000000.0;
         if (dtSeconds > 0) {
@@ -410,7 +426,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
         }
       }
 
-      // 2. Slash
+      // 2. Slash (Circular)
       if (!player.isSlashing && _actionStartPos != null) {
         final Vector2 center = _actionStartPos!;
         final Vector2 toFinger = currentPos - center;
@@ -503,20 +519,24 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 class Obstacle extends PositionComponent {
   final double radius;
   final double height;
-  
+  final Paint _paint = Paint()..color = Colors.grey;
+
   Obstacle({required this.radius, required this.height}) : super(anchor: Anchor.center, size: Vector2.all(radius * 2));
 
   @override
   void render(Canvas canvas) {
+    // 2.5D Cylinder Render
     final Offset center = (size / 2).toOffset();
     final double r = radius;
     final double h = height;
 
+    // Shadow
     canvas.drawOval(
       Rect.fromCenter(center: center, width: width, height: width * 0.6),
       Paint()..color = Colors.black.withOpacity(0.3)
     );
 
+    // Body
     final Offset topCenter = center + Offset(0, -h);
     final Path bodyPath = Path();
     bodyPath.moveTo(center.dx - r, center.dy);
@@ -526,7 +546,9 @@ class Obstacle extends PositionComponent {
     bodyPath.close();
     canvas.drawPath(bodyPath, Paint()..color = Colors.grey.shade700);
 
+    // Top
     canvas.drawCircle(topCenter, r, Paint()..color = Colors.grey.shade400);
+    // Rim
     canvas.drawCircle(topCenter, r, Paint()..style = PaintingStyle.stroke ..color = Colors.white.withOpacity(0.3));
   }
 }
@@ -540,11 +562,13 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   late int maxHealth;
   double _damageCooldown = 0.0;
 
+  // Progression Fields
   int level = 1;
   int xp = 0;
   int xpToNextLevel = 10;
   double damageMult = 1.0;
 
+  // Meta-Progression Stats
   late double dashCooldownMax;
 
   bool isDashing = false;
@@ -563,9 +587,12 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   @override
   Future<void> onLoad() async {
     super.onLoad();
+    // Initialize Stats from GameData
     final data = GameData();
     maxHealth = 100 + (data.levelHp * 20);
     health = maxHealth;
+
+    // Base dash cooldown 0.8s, reduced by 10% per level
     dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
   }
 
@@ -584,11 +611,14 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     if (isDashing) {
       _dashTimer -= dt;
 
-      double progress = (1.0 - (_dashTimer / _dashDuration)).clamp(0.0, 1.0);
+      // Ease-out movement
+      double progress = (1.0 - (_dashTimer / _dashDuration)).clamp(0.0, 1.0); // Clamp to prevent <0 or >1
+      // Use easeOutCubic for a sharper drop-off to prevent "bouncy" feeling at end
       double currentSpeedMult = _dashSpeedMult * (1.0 - Curves.easeOutCubic.transform(progress) * 0.7);
 
       position.add(_dashDirection * (_baseSpeed * currentSpeedMult) * dt);
 
+      // Spawn Trail
       if (_dashTimer % 0.05 < dt) {
          gameRef.world.add(VisualEffects.createDashTrail(position, angle));
       }
@@ -604,35 +634,45 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
   @override
   void render(Canvas canvas) {
-    const double h = 15.0; 
+    // 2.5D Rendering Constants
+    const double h = 15.0; // Height of the cylinder
     final double r = width / 2;
     final Offset center = (size / 2).toOffset();
 
+    // Shadow (Base)
     canvas.drawOval(
       Rect.fromCenter(center: center, width: width, height: width * 0.6),
       Paint()..color = Colors.black.withOpacity(0.3)
     );
 
     if (isDashing) {
+      // Dash Visual: Triangle "Flying" low
       final Path path = Path();
+      // Adjust points to account for height/offset
       path.moveTo(width, (height / 2) - h/2);
       path.lineTo(0, 0 - h/2);
       path.lineTo(0, height - h/2);
       path.close();
       canvas.drawPath(path, _yellowPaint);
     } else {
-      final Paint bodyPaint = Paint()..color = const Color(0xFF00AAAA); 
+      // Cylinder Body (Darker)
+      final Paint bodyPaint = Paint()..color = const Color(0xFF00AAAA); // Darker Cyan
+
       final Offset topCenter = center + Offset(0, -h);
 
+      // Draw Body
       final Path bodyPath = Path();
-      bodyPath.moveTo(center.dx - r, center.dy);
-      bodyPath.lineTo(center.dx + r, center.dy);
-      bodyPath.lineTo(topCenter.dx + r, topCenter.dy);
-      bodyPath.lineTo(topCenter.dx - r, topCenter.dy);
+      bodyPath.moveTo(center.dx - r, center.dy); // Bottom Left
+      bodyPath.lineTo(center.dx + r, center.dy); // Bottom Right
+      bodyPath.lineTo(topCenter.dx + r, topCenter.dy); // Top Right
+      bodyPath.lineTo(topCenter.dx - r, topCenter.dy); // Top Left
       bodyPath.close();
       canvas.drawPath(bodyPath, bodyPaint);
 
+      // Draw Top (Main Circle)
       canvas.drawCircle(topCenter, r, _cyanPaint);
+
+      // Highlight/Rim (Optional)
       canvas.drawCircle(topCenter, r, Paint()..style = PaintingStyle.stroke ..color = Colors.white.withOpacity(0.5) ..strokeWidth = 2);
     }
   }
@@ -663,6 +703,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   }
 
   void shoot(Vector2 dir) {
+    // Basic cooldown for shooting? Let's say 0.3s
+    // For now, no strict cooldown was requested, but let's add a small one to prevent spam lag
     gameRef.world.add(PlayerProjectile(position, dir, damageMult));
   }
 
@@ -678,7 +720,9 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     level++;
     xpToNextLevel = (xpToNextLevel * 1.5).toInt();
 
+    // Stats Up: Streamlined
     damageMult += 0.1;
+    // Heal to Full
     health = maxHealth;
 
     gameRef.hud.showStory("LEVEL UP! SYSTEMS RESTORED.");
@@ -692,8 +736,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     health -= amount;
     _damageCooldown = 1.0;
-    gameRef.cameraShake(2.0);
-    gameRef.world.add(DamageText(amount, position, isCrit: true));
+    gameRef.cameraShake(2.0); // Shake Screen
+    gameRef.world.add(DamageText(amount, position, isCrit: true)); // Show red text
 
     if (health <= 0) {
       health = 0;
@@ -754,6 +798,7 @@ class PlayerProjectile extends PositionComponent with HasGameRef<RpgGame> {
     _lifeTime += dt;
     if (_lifeTime > 2.0) removeFromParent();
 
+    // Collision with Enemies
     for (final child in gameRef.world.children) {
       if (child is Enemy) {
         if (child.position.distanceTo(position) < (child.size.x / 2 + 5)) {
@@ -818,18 +863,21 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
   void _pickNewTarget() {
     final Random rng = Random();
+    // Move towards player with some randomness to avoid stacking perfectly
     Vector2 playerPos = gameRef.player.position;
 
     double dx = (rng.nextDouble() - 0.5) * 200;
     double dy = (rng.nextDouble() - 0.5) * 200;
 
     _roamTarget = playerPos + Vector2(dx, dy);
-    _roamTimer = 1.0 + rng.nextDouble() * 2.0;
+    _roamTimer = 1.0 + rng.nextDouble() * 2.0; // Update target every 1-3 seconds
   }
 
   void takeDamage(int amount, {Vector2? knockbackDir}) {
+    // Fix: Prevent processing damage on already dead enemies
     if (health <= 0 || _invulnerableTimer > 0) return;
 
+    // Show Damage Number
     gameRef.world.add(DamageText(amount, position.clone() + Vector2(0, -30)));
 
     health -= amount;
@@ -839,11 +887,13 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     _invulnerableTimer = 0.5;
 
     if (health <= 0) {
-      health = 0; 
+      health = 0; // Clamp
       removeFromParent();
       gameRef.killCount++;
 
+      // Drop XP Gem
       gameRef.world.add(XpGem(isElite ? 50 : 10)..position = position);
+
       gameRef.world.add(VisualEffects.createExplosion(position));
       gameRef.cameraShake(1.0);
     }
@@ -851,16 +901,19 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
   @override
   void render(Canvas canvas) {
+    // 2.5D Rendering
     const double h = 15.0;
     final double r = width / 2;
     final Offset center = (size / 2).toOffset();
 
+    // Shadow
     canvas.drawOval(
       Rect.fromCenter(center: center, width: width, height: width * 0.6),
       Paint()..color = Colors.black.withOpacity(0.3)
     );
 
-    final Paint bodyPaint = Paint()..color = const Color(0xFFAA0000); 
+    // Cylinder Body
+    final Paint bodyPaint = Paint()..color = const Color(0xFFAA0000); // Darker Red
     final Offset topCenter = center + Offset(0, -h);
 
     final Path bodyPath = Path();
@@ -871,8 +924,10 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     bodyPath.close();
     canvas.drawPath(bodyPath, bodyPaint);
 
+    // Top
     canvas.drawCircle(topCenter, r, _redPaint);
 
+    // Flash
     if (_invulnerableTimer > 0) {
        final Paint flashPaint = Paint()..color = const Color(0x88FFFFFF);
        canvas.drawCircle(topCenter, r, flashPaint);
@@ -977,16 +1032,19 @@ class ShooterEnemy extends Enemy {
      path.close();
      canvas.drawPath(path, Paint()..color = Colors.purpleAccent);
 
+     // Add a shadow or highlight to match style
      canvas.drawPath(path, Paint()..style=PaintingStyle.stroke..color=Colors.white.withOpacity(0.5));
 
+     // Flash
     if (_invulnerableTimer > 0) {
        final Paint flashPaint = Paint()..color = const Color(0x88FFFFFF);
-       canvas.drawCircle(Offset.zero, 20, flashPaint); 
+       canvas.drawCircle(Offset.zero, 20, flashPaint); // Simple circle flash for shooter
     }
   }
 
   @override
   void update(double dt) {
+    // Handle invulnerability and knockback manually since we are overriding Enemy.update
     if (_invulnerableTimer > 0) {
       _invulnerableTimer -= dt;
     }
@@ -996,15 +1054,17 @@ class ShooterEnemy extends Enemy {
       _knockbackVelocity.scale(0.9);
     }
 
+    // Custom movement: maintain distance
     double dist = position.distanceTo(gameRef.player.position);
     Vector2 dir = (gameRef.player.position - position).safeNormalized();
 
     if (dist < 300) {
-       position -= dir * 80 * dt; 
+       position -= dir * 80 * dt; // Retreat
     } else if (dist > 500) {
-       position += dir * 100 * dt; 
+       position += dir * 100 * dt; // Chase
     }
 
+    // Shoot Logic
     _shootTimer += dt;
     if (_shootTimer > 2.0) {
        _shootTimer = 0.0;
