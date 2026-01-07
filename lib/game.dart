@@ -221,8 +221,8 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     if (_shakeTimer > 0) {
       _shakeTimer -= dt;
       final Random rng = Random();
-      final double offX = (rng.nextDouble() - 0.5) * 0.05 * _shakeIntensity;
-      final double offY = (rng.nextDouble() - 0.5) * 0.05 * _shakeIntensity;
+      final double offX = (rng.nextDouble() - 0.5) * 0.025 * _shakeIntensity;
+      final double offY = (rng.nextDouble() - 0.5) * 0.025 * _shakeIntensity;
       cameraComponent.viewfinder.anchor = Anchor(0.5 + offX, 0.5 + offY);
     } else {
       cameraComponent.viewfinder.anchor = Anchor.center;
