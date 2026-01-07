@@ -32,11 +32,11 @@ class VirtualJoystick extends PositionComponent with HasVisibility {
 
   final Paint _basePaint = Paint()..color = Colors.white.withOpacity(0.2)..style = PaintingStyle.fill;
   final Paint _baseStroke = Paint()..color = Colors.white.withOpacity(0.4)..style = PaintingStyle.stroke..strokeWidth = 2;
-  final Paint _knobPaint = Paint()..color = Colors.cyanAccent.withOpacity(0.8);
+  late final Paint _knobPaint;
 
-  VirtualJoystick() : super(anchor: Anchor.center, size: Vector2.all(100)) {
+  VirtualJoystick({Color knobColor = Colors.cyanAccent}) : super(anchor: Anchor.center, size: Vector2.all(100)) {
+    _knobPaint = Paint()..color = knobColor.withOpacity(0.8);
     isVisible = false;
-    // positionType removed as it is not needed when added to viewport or using standard PositionComponent defaults in 1.16+
   }
 
   void updateKnob(Vector2 delta) {
@@ -70,11 +70,30 @@ class VirtualJoystick extends PositionComponent with HasVisibility {
   }
 }
 
+class AimLine extends PositionComponent {
+  final Paint _paint = Paint()..color = Colors.red.withOpacity(0.5)..strokeWidth = 2.0..style = PaintingStyle.stroke;
+
+  AimLine() : super(anchor: Anchor.centerLeft, size: Vector2(200, 2));
+
+  @override
+  void render(Canvas canvas) {
+    // Draw dotted line
+    double dashWidth = 10;
+    double dashSpace = 5;
+    double startX = 0;
+    while (startX < width) {
+      canvas.drawLine(Offset(startX, height / 2), Offset(startX + dashWidth, height / 2), _paint);
+      startX += dashWidth + dashSpace;
+    }
+  }
+}
+
 /// The main Game class.
 class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   late Player player;
   late Hud hud;
   late VirtualJoystick joystick;
+  late VirtualJoystick aimJoystick;
 
   // Game State
   int killCount = 0;
@@ -95,13 +114,13 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
   // --- Input State ---
   int? _movePointerId;
-  int? _actionPointerId;
+  int? _aimPointerId;
 
   // Movement State
   Vector2? _moveStartPos;
+  Vector2? _aimStartPos;
 
   // Action Gesture State
-  Vector2? _actionStartPos;
   Vector2? _lastActionPos;
   DateTime? _lastActionTime;
 
@@ -147,9 +166,12 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     hud = Hud();
     add(hud);
 
-    // Add Joystick (On top of HUD or World? HUD is Priority 100. Joystick on top of everything)
-    joystick = VirtualJoystick()..priority = 200;
-    hud.add(joystick); // Add to HUD (Root Component) to ensure screen-space alignment
+    // Add Joysticks (On top of HUD or World? HUD is Priority 100. Joystick on top of everything)
+    joystick = VirtualJoystick(knobColor: Colors.cyanAccent)..priority = 200;
+    hud.add(joystick);
+
+    aimJoystick = VirtualJoystick(knobColor: Colors.redAccent)..priority = 200;
+    hud.add(aimJoystick);
 
     // Initial Wave
     _spawnWave();
@@ -473,6 +495,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
        player.xp = 0;
        player.xpToNextLevel = 10;
        player.damageMult = 1.0;
+       player.ultCharge = 0;
 
        player.position = Vector2.zero();
        world.children.whereType<Enemy>().forEach((e) => e.removeFromParent());
@@ -544,6 +567,10 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   int xpToNextLevel = 10;
   double damageMult = 1.0;
 
+  // Ultimate
+  int ultCharge = 0;
+  int maxUltCharge = 100;
+
   // Meta-Progression Stats
   late double dashCooldownMax;
 
@@ -554,6 +581,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   Vector2 _dashDirection = Vector2.zero();
 
   bool isSlashing = false;
+
+  late AimLine aimLine;
 
   final Paint _cyanPaint = Paint()..color = const Color(0xFF00FFFF);
   final Paint _yellowPaint = Paint()..color = const Color(0xFFFFFF00);
@@ -570,6 +599,11 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     // Base dash cooldown 0.8s, reduced by 10% per level
     dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
+
+    aimLine = AimLine();
+    aimLine.scale = Vector2.zero(); // Hide
+    aimLine.position = size / 2;
+    add(aimLine);
   }
 
   @override
@@ -682,6 +716,43 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     // Basic cooldown for shooting? Let's say 0.3s
     // For now, no strict cooldown was requested, but let's add a small one to prevent spam lag
     gameRef.world.add(PlayerProjectile(position, dir, damageMult));
+  }
+
+  void showAimLine(bool show) {
+    if (show) {
+      aimLine.scale = Vector2.all(1.0);
+    } else {
+      aimLine.scale = Vector2.zero();
+    }
+  }
+
+  void updateAimAngle(Vector2 dir) {
+    angle = atan2(dir.y, dir.x);
+  }
+
+  void gainUltCharge(int amount) {
+    ultCharge = (ultCharge + amount).clamp(0, maxUltCharge);
+  }
+
+  void triggerUlt() {
+    if (ultCharge < maxUltCharge) return;
+
+    ultCharge = 0;
+    gameRef.cameraShake(2.0);
+    gameRef.world.add(VisualEffects.createShockwave(position));
+
+    // Clear projectiles
+    gameRef.world.children.whereType<EnemyProjectile>().forEach((e) => e.removeFromParent());
+
+    // Damage and Push Enemies
+    for (final child in gameRef.world.children) {
+      if (child is Enemy) {
+        double dist = position.distanceTo(child.position);
+        if (dist < 300) {
+           child.takeDamage(50, knockbackDir: child.position - position);
+        }
+      }
+    }
   }
 
   void gainXp(int amount) {
@@ -866,6 +937,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       health = 0; // Clamp
       removeFromParent();
       gameRef.killCount++;
+      gameRef.player.gainUltCharge(5);
 
       // Drop XP Gem
       gameRef.world.add(XpGem(isElite ? 50 : 10)..position = position);
