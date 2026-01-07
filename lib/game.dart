@@ -168,6 +168,17 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
         world.add(Obstacle(radius: isBig ? 40 : 20, height: isBig ? 60 : 30)..position = pos);
       }
     }
+
+    // Add Barrels randomly
+    for (int i = 0; i < 8; i++) {
+      Vector2 pos = Vector2(
+        (rng.nextDouble() - 0.5) * 1800,
+        (rng.nextDouble() - 0.5) * 1800,
+      );
+      if (pos.length > 200) {
+        world.add(Barrel()..position = pos);
+      }
+    }
   }
 
   void cameraShake(double intensity) {
@@ -205,7 +216,9 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     if (isEliteWave) {
       // Spawn Boss
-      world.add(Enemy(isElite: true)..position = player.position + Vector2(600, 0));
+      // Randomly pick a modifier
+      final modifier = EnemyModifier.values[rng.nextInt(EnemyModifier.values.length)];
+      world.add(Enemy(isElite: true, modifier: modifier)..position = player.position + Vector2(600, 0));
     }
   }
 
@@ -260,17 +273,39 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     // NEW: XP Collection Loop
     for (final gem in world.children.whereType<XpGem>()) {
-      if (player.position.distanceTo(gem.position) < 100) {
-        // Magnet
-        gem.position.add((player.position - gem.position).safeNormalized() * 300 * dt);
-        if (player.position.distanceTo(gem.position) < 10) {
-          // In new logic, gems are also currency.
-          // We treat "XP Gems" as the currency source for now.
+      bool collected = false;
+      if (gem.isMagnetized) {
+          // Fast magnetic pull
+          gem.position.add((player.position - gem.position).safeNormalized() * 800 * dt);
+          if (player.position.distanceTo(gem.position) < 20) {
+             collected = true;
+          }
+      } else {
+        if (player.position.distanceTo(gem.position) < 100) {
+          // Normal magnetic pull
+          gem.position.add((player.position - gem.position).safeNormalized() * 300 * dt);
+          if (player.position.distanceTo(gem.position) < 10) {
+             collected = true;
+          }
+        }
+      }
+
+      if (collected) {
           runGems += gem.amount;
           player.gainXp(gem.amount);
           gem.removeFromParent();
-        }
       }
+    }
+
+    // Magnet Item Collection Loop
+    for (final magnet in world.children.whereType<MagnetItem>()) {
+        if (player.position.distanceTo(magnet.position) < (player.size.x / 2 + magnet.size.x / 2)) {
+            // Activate Magnet
+            for (final gem in world.children.whereType<XpGem>()) {
+                gem.isMagnetized = true;
+            }
+            magnet.removeFromParent();
+        }
     }
 
     // --- COLLISION LOGIC ---
@@ -296,7 +331,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
         // Enemy vs Obstacle
         for (final other in world.children) {
-          if (other is Enemy) {
+          if (other is Enemy && other.modifier != EnemyModifier.ghostly) { // Ghostly enemies can pass through obstacles
              double distE = other.position.distanceTo(child.position);
              double radiusE = (other.size.x / 2) + child.radius;
              if (distE < radiusE) {
@@ -313,6 +348,16 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
              }
           }
         }
+      }
+
+      // Barrel Collision
+      if (child is Barrel) {
+          // Player Body vs Barrel
+          double distP = player.position.distanceTo(child.position);
+          double radiusP = (player.size.x / 2) + child.radius;
+          if (distP < radiusP) {
+             child.takeDamage(); // Explode on contact
+          }
       }
 
       // 2. Combat
@@ -502,9 +547,12 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
        world.children.whereType<ParticleSystemComponent>().forEach((e) => e.removeFromParent());
        world.children.whereType<XpGem>().forEach((e) => e.removeFromParent());
        world.children.whereType<EnemyProjectile>().forEach((e) => e.removeFromParent());
+       world.children.whereType<Barrel>().forEach((e) => e.removeFromParent());
+       world.children.whereType<MagnetItem>().forEach((e) => e.removeFromParent());
 
        hud.storyText.text = "";
        _spawnWave();
+       _spawnObstacles(); // Respawn obstacles and barrels
        overlays.remove('GameOver');
   }
 
@@ -803,8 +851,14 @@ class PlayerProjectile extends PositionComponent with HasGameRef<RpgGame> {
         if (child.position.distanceTo(position) < (child.size.x / 2 + 5)) {
           child.takeDamage((5 * damageMult).toInt());
           removeFromParent();
-          break;
+          break; // Projectile destroyed
         }
+      } else if (child is Barrel) {
+          if (child.position.distanceTo(position) < (child.size.x / 2 + 5)) {
+            child.takeDamage();
+            removeFromParent();
+            break;
+          }
       }
     }
   }
@@ -824,10 +878,15 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   double _invulnerableTimer = 0.0;
   bool isElite = false;
 
+  final EnemyModifier modifier;
+  double _regenTimer = 0.0;
+  int _maxHealth = 2;
+
   final Paint _redPaint = Paint()..color = const Color(0xFFFF0000);
 
-  Enemy({this.isElite = false}) : super(size: Vector2.all(isElite ? 80 : 40), anchor: Anchor.center) {
+  Enemy({this.isElite = false, this.modifier = EnemyModifier.none}) : super(size: Vector2.all(isElite ? 80 : 40), anchor: Anchor.center) {
      if(isElite) health = health * 5;
+     _maxHealth = health;
   }
 
   @override
@@ -836,6 +895,16 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
     if (_invulnerableTimer > 0) {
       _invulnerableTimer -= dt;
+    }
+
+    // Regen logic
+    if (modifier == EnemyModifier.regen && health < _maxHealth && health > 0) {
+        _regenTimer += dt;
+        if (_regenTimer >= 1.0) {
+            _regenTimer = 0;
+            int healAmount = (_maxHealth * 0.01).ceil();
+            health = (health + healAmount).clamp(0, _maxHealth);
+        }
     }
 
     if (_knockbackVelocity.length > 5) {
@@ -854,7 +923,9 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
         if (dir.length < 5) {
           _pickNewTarget();
         } else {
-          position.add(dir.safeNormalized() * _speed * dt);
+          double currentSpeed = _speed;
+          if (modifier == EnemyModifier.swift) currentSpeed *= 1.5;
+          position.add(dir.safeNormalized() * currentSpeed * dt);
         }
       }
     }
@@ -890,6 +961,12 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       removeFromParent();
       gameRef.killCount++;
 
+      // Magnet Drop Check (1 in 200 chance)
+      final Random rng = Random();
+      if (rng.nextInt(200) == 0) { // 0.5%
+          gameRef.world.add(MagnetItem()..position = position);
+      }
+
       // Drop XP Gem
       gameRef.world.add(XpGem(isElite ? 50 : 10)..position = position);
 
@@ -905,14 +982,20 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     final double r = width / 2;
     final Offset center = (size / 2).toOffset();
 
+    // Opacity for Ghostly
+    int alpha = 255;
+    if (modifier == EnemyModifier.ghostly) {
+        alpha = (255 * 0.6).toInt();
+    }
+
     // Shadow
     canvas.drawOval(
       Rect.fromCenter(center: center, width: width, height: width * 0.6),
-      Paint()..color = Colors.black.withOpacity(0.3)
+      Paint()..color = Colors.black.withOpacity(0.3 * (alpha/255))
     );
 
     // Cylinder Body
-    final Paint bodyPaint = Paint()..color = const Color(0xFFAA0000); // Darker Red
+    final Paint bodyPaint = Paint()..color = const Color(0xFFAA0000).withAlpha(alpha); // Darker Red
     final Offset topCenter = center + Offset(0, -h);
 
     final Path bodyPath = Path();
@@ -924,7 +1007,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     canvas.drawPath(bodyPath, bodyPaint);
 
     // Top
-    canvas.drawCircle(topCenter, r, _redPaint);
+    canvas.drawCircle(topCenter, r, _redPaint..color = _redPaint.color.withAlpha(alpha));
 
     // Flash
     if (_invulnerableTimer > 0) {
@@ -973,6 +1056,7 @@ class DamageText extends PositionComponent {
 class XpGem extends PositionComponent {
   final int amount;
   double _lifeTime = 0.0;
+  bool isMagnetized = false;
 
   XpGem(this.amount) : super(size: Vector2.all(10), anchor: Anchor.center);
 
@@ -1069,5 +1153,105 @@ class ShooterEnemy extends Enemy {
        _shootTimer = 0.0;
        gameRef.world.add(EnemyProjectile(position, gameRef.player.position));
     }
+  }
+}
+
+enum EnemyModifier { none, swift, ghostly, regen }
+
+class Barrel extends PositionComponent with HasGameRef<RpgGame> {
+  int hp = 1;
+  final double radius = 25;
+  final double height = 40;
+
+  Barrel() : super(anchor: Anchor.center, size: Vector2.all(50));
+
+  @override
+  void render(Canvas canvas) {
+    // Red cylinder with danger marking
+    final Offset center = (size / 2).toOffset();
+    final double r = radius;
+    final double h = height;
+
+    // Shadow
+    canvas.drawOval(
+      Rect.fromCenter(center: center, width: width, height: width * 0.6),
+      Paint()..color = Colors.black.withOpacity(0.3)
+    );
+
+    // Body
+    final Offset topCenter = center + Offset(0, -h);
+    final Path bodyPath = Path();
+    bodyPath.moveTo(center.dx - r, center.dy);
+    bodyPath.lineTo(center.dx + r, center.dy);
+    bodyPath.lineTo(topCenter.dx + r, topCenter.dy);
+    bodyPath.lineTo(topCenter.dx - r, topCenter.dy);
+    bodyPath.close();
+    canvas.drawPath(bodyPath, Paint()..color = Colors.red.shade900);
+
+    // Top
+    canvas.drawCircle(topCenter, r, Paint()..color = Colors.red.shade700);
+
+    // Danger Marking (Yellow X on top)
+    final Paint markPaint = Paint()..color = Colors.yellow..strokeWidth = 4.0..style = PaintingStyle.stroke;
+    canvas.drawLine(topCenter + Offset(-10, -10), topCenter + Offset(10, 10), markPaint);
+    canvas.drawLine(topCenter + Offset(10, -10), topCenter + Offset(-10, 10), markPaint);
+
+    // Rim
+    canvas.drawCircle(topCenter, r, Paint()..style = PaintingStyle.stroke ..color = Colors.white.withOpacity(0.3));
+  }
+
+  void takeDamage() {
+     if (hp <= 0) return;
+     hp--;
+     if (hp <= 0) _explode();
+  }
+
+  void _explode() {
+    removeFromParent();
+    gameRef.world.add(VisualEffects.createExplosion(position, scale: 3.0));
+
+    // Deal damage
+    // Find entities in radius 150
+    for(final child in gameRef.world.children) {
+         if (child is Enemy) {
+             if (child.position.distanceTo(position) < 150) {
+                 child.takeDamage(500, knockbackDir: child.position - position);
+             }
+         } else if (child is Player) {
+              if (child.position.distanceTo(position) < 150) {
+                  child.takeDamage(500); // Massive damage
+              }
+         }
+    }
+    gameRef.cameraShake(5.0);
+  }
+}
+
+class MagnetItem extends PositionComponent with HasGameRef<RpgGame> {
+  late TextPainter _tp;
+
+  MagnetItem() : super(anchor: Anchor.center, size: Vector2.all(30));
+
+  @override
+  Future<void> onLoad() async {
+    const TextSpan span = TextSpan(
+        text: "M",
+        style: TextStyle(
+            color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold));
+    _tp = TextPainter(text: span, textDirection: TextDirection.ltr);
+    _tp.layout();
+  }
+
+  @override
+  void render(Canvas canvas) {
+    final double w = width;
+    final double h = height;
+
+    // Simple Square Icon with 'M'
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()..color = Colors.white);
+    canvas.drawRect(
+        Rect.fromLTWH(2, 2, w - 4, h - 4), Paint()..color = Colors.blue);
+
+    _tp.paint(canvas, Offset((w - _tp.width) / 2, (h - _tp.height) / 2));
   }
 }

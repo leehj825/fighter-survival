@@ -5,20 +5,20 @@ import 'package:flame/particles.dart';
 import 'package:flutter/material.dart';
 
 class VisualEffects {
-  static ParticleSystemComponent createExplosion(Vector2 position) {
+  static ParticleSystemComponent createExplosion(Vector2 position, {double scale = 1.0}) {
     final Random rng = Random();
     return ParticleSystemComponent(
       particle: Particle.generate(
-        count: 20,
-        lifespan: 0.5,
+        count: (20 * scale).toInt(),
+        lifespan: 0.5 * scale,
         generator: (i) => AcceleratedParticle(
           position: position.clone(),
           speed: Vector2(
-            (rng.nextDouble() - 0.5) * 200,
-            (rng.nextDouble() - 0.5) * 200,
+            (rng.nextDouble() - 0.5) * 200 * scale,
+            (rng.nextDouble() - 0.5) * 200 * scale,
           ),
           child: CircleParticle(
-            radius: 2.0,
+            radius: 2.0 * scale,
             paint: Paint()..color = Colors.redAccent,
           ),
         ),
