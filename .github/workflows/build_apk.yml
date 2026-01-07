@@ -35,6 +35,18 @@ jobs:
       - name: Create Android scaffolding
         run: flutter create . --platforms android
 
+      - name: Fix Kotlin Version
+        run: |
+          # Force Kotlin version to 1.9.0 to avoid 403 errors with newer/unstable versions
+          # Newer Flutter templates put the version in settings.gradle inside the plugins block
+          if [ -f android/settings.gradle ]; then
+            sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.22"/g' android/settings.gradle
+          fi
+          # Also check project-level build.gradle for older templates
+          if [ -f android/build.gradle ]; then
+             sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.22"/g' android/build.gradle
+          fi
+
       - name: Build APK
         run: flutter build apk --release
 

@@ -12,7 +12,7 @@ class VisualEffects {
         count: 20,
         lifespan: 0.5,
         generator: (i) => AcceleratedParticle(
-          position: position,
+          position: position.clone(),
           speed: Vector2(
             (rng.nextDouble() - 0.5) * 200,
             (rng.nextDouble() - 0.5) * 200,
@@ -29,6 +29,44 @@ class VisualEffects {
   static PositionComponent createDashTrail(Vector2 position, double angle) {
     // Simple fading triangle trail
     return _DashTrailComponent(position, angle);
+  }
+
+  static PositionComponent createShockwave(Vector2 position) {
+    return _ShockwaveComponent(position);
+  }
+}
+
+class _ShockwaveComponent extends PositionComponent {
+  final double _lifespan = 0.5;
+  double _timer = 0.0;
+  final Paint _paint = Paint()
+    ..color = Colors.cyanAccent
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 4.0;
+
+  _ShockwaveComponent(Vector2 pos) {
+    position = pos;
+    size = Vector2.all(300); // Max radius approx 150
+    anchor = Anchor.center;
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _timer += dt;
+    if (_timer >= _lifespan) {
+      removeFromParent();
+    } else {
+      double opacity = (1.0 - (_timer / _lifespan)).clamp(0.0, 1.0);
+      _paint.color = Colors.cyanAccent.withOpacity(opacity);
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    double progress = _timer / _lifespan;
+    double currentRadius = (size.x / 2) * progress;
+    canvas.drawCircle(Offset(size.x / 2, size.y / 2), currentRadius, _paint);
   }
 }
 
