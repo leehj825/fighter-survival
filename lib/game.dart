@@ -129,6 +129,9 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     player = Player()..anchor = Anchor.center;
     world.add(player);
 
+    // Add Orbital Shield
+    world.add(OrbitalShield(player));
+
     // Add Infinite Background (Grid)
     world.add(GridBackground());
 
@@ -177,6 +180,17 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       );
       if (pos.length > 200) {
         world.add(Barrel()..position = pos);
+      }
+    }
+
+    // Add Spike Traps
+    for (int i = 0; i < 5; i++) {
+      Vector2 pos = Vector2(
+        (rng.nextDouble() - 0.5) * 1800,
+        (rng.nextDouble() - 0.5) * 1800,
+      );
+      if (pos.length > 200) {
+        world.add(SpikeTrap()..position = pos);
       }
     }
   }
@@ -1253,5 +1267,102 @@ class MagnetItem extends PositionComponent with HasGameRef<RpgGame> {
         Rect.fromLTWH(2, 2, w - 4, h - 4), Paint()..color = Colors.blue);
 
     _tp.paint(canvas, Offset((w - _tp.width) / 2, (h - _tp.height) / 2));
+  }
+}
+
+class OrbitalShield extends PositionComponent with HasGameRef<RpgGame> {
+  final Player _player;
+  double _angle = 0.0;
+  final double _orbitRadius = 80.0;
+  final double _orbitSpeed = 2.0;
+
+  OrbitalShield(this._player) : super(size: Vector2.all(20), anchor: Anchor.center);
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (_player.isRemoved) {
+      removeFromParent();
+      return;
+    }
+
+    _angle += _orbitSpeed * dt;
+    position = _player.position + Vector2(cos(_angle), sin(_angle)) * _orbitRadius;
+
+    // Collision Logic
+    for (final child in gameRef.world.children) {
+      if (child is Enemy) {
+        if (child.position.distanceTo(position) < (child.size.x / 2 + size.x / 2)) {
+           child.takeDamage(10, knockbackDir: child.position - _player.position);
+        }
+      } else if (child is EnemyProjectile) {
+        if (child.position.distanceTo(position) < (child.size.x / 2 + size.x / 2)) {
+           child.removeFromParent(); // Block projectile
+        }
+      }
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawCircle(Offset.zero, 8, Paint()..color = Colors.cyanAccent.withOpacity(0.8));
+    canvas.drawCircle(Offset.zero, 10, Paint()..style=PaintingStyle.stroke ..color = Colors.white.withOpacity(0.5) ..strokeWidth=2);
+  }
+}
+
+class SpikeTrap extends PositionComponent with HasGameRef<RpgGame> {
+  double _timer = 0.0;
+  int _state = 0; // 0: Safe, 1: Warning, 2: Active
+
+  SpikeTrap() : super(anchor: Anchor.center, size: Vector2.all(60));
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _timer += dt;
+
+    // Cycle: 2s Safe -> 1s Warning -> 1s Active
+    if (_state == 0 && _timer > 2.0) {
+      _state = 1;
+      _timer = 0;
+    } else if (_state == 1 && _timer > 1.0) {
+      _state = 2;
+      _timer = 0;
+    } else if (_state == 2 && _timer > 1.0) {
+      _state = 0;
+      _timer = 0;
+    }
+
+    if (_state == 2) {
+       // Damage Player
+       if (gameRef.player.position.distanceTo(position) < 30) {
+          gameRef.player.takeDamage(20);
+       }
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    // Base
+    canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 50, height: 50), Paint()..color = Colors.black.withOpacity(0.3));
+
+    if (_state == 0) {
+       // Safe (Dark Grey)
+       canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 40, height: 40), Paint()..color = Colors.grey.shade800);
+    } else if (_state == 1) {
+       // Warning (Flashing Red)
+       double flash = (sin(_timer * 20) + 1) / 2;
+       canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 40, height: 40), Paint()..color = Color.lerp(Colors.grey.shade800, Colors.red, flash)!);
+    } else {
+       // Active (Spikes)
+       canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 40, height: 40), Paint()..color = Colors.grey.shade600);
+       // Spikes
+       final Paint spikePaint = Paint()..color = Colors.white;
+       canvas.drawCircle(Offset(-10, -10), 5, spikePaint);
+       canvas.drawCircle(Offset(10, -10), 5, spikePaint);
+       canvas.drawCircle(Offset(-10, 10), 5, spikePaint);
+       canvas.drawCircle(Offset(10, 10), 5, spikePaint);
+       canvas.drawCircle(Offset(0, 0), 5, spikePaint);
+    }
   }
 }
