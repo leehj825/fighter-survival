@@ -12,7 +12,7 @@ class VisualEffects {
         count: 20,
         lifespan: 0.5,
         generator: (i) => AcceleratedParticle(
-          position: position,
+          position: position.clone(),
           speed: Vector2(
             (rng.nextDouble() - 0.5) * 200,
             (rng.nextDouble() - 0.5) * 200,
