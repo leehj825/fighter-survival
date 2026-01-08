@@ -48,7 +48,8 @@ class SoundService {
     await _initAudioContext();
 
     // 2. THEN: Load settings and complete the completer
-    await _loadVolumeSettings();
+    // We don't await here to allow app startup to proceed; settings will apply when loaded
+    _loadVolumeSettings();
   }
 
   /// Initialize audio context to allow mixing with other sounds
@@ -61,7 +62,7 @@ class SoundService {
           isSpeakerphoneOn: true,
           stayAwake: false,
           contentType: AndroidContentType.sonification,
-          usageType: AndroidUsageType.media, // CHANGED: 'media' is less aggressive than 'game'
+          usageType: AndroidUsageType.game, // Reverted to 'game' for better compatibility
           audioFocus: AndroidAudioFocus.none, // Key setting: Don't request focus to avoid stopping other apps
         ),
         iOS: AudioContextIOS(
@@ -81,7 +82,9 @@ class SoundService {
       print('✅ Audio context configured to mix with other apps and players created');
     } catch (e) {
       print('⚠️ Error configuring audio context: $e');
-      // Continue even if audio context setup fails
+      // Ensure players are created even if context setup fails
+      try { _backgroundMusicPlayer = AudioPlayer(); } catch(_) {}
+      try { _sfxPlayer = AudioPlayer(); } catch(_) {}
     }
   }
 
@@ -113,15 +116,10 @@ class SoundService {
         _targetVolume = finalVolume; // Update target volume for fade
         print('🔊 Updated playing music volume to: ${finalVolume.toStringAsFixed(2)}');
       }
-
-      // Complete the completer to signal that settings are loaded
-      if (!_settingsLoadCompleter!.isCompleted) {
-        _settingsLoadCompleter!.complete();
-      }
     } catch (e) {
       print('⚠️ Error loading volume settings: $e');
-      // Continue with default values if loading fails
-      // Complete the completer even on error so music can still play
+    } finally {
+      // Complete the completer to signal that settings are loaded (or failed)
       if (_settingsLoadCompleter != null && !_settingsLoadCompleter!.isCompleted) {
         _settingsLoadCompleter!.complete();
       }
@@ -131,7 +129,12 @@ class SoundService {
   /// Wait for volume settings to be loaded (used before playing music)
   Future<void> _ensureSettingsLoaded() async {
     if (_settingsLoadCompleter != null && !_settingsLoadCompleter!.isCompleted) {
-      await _settingsLoadCompleter!.future;
+      // Add a timeout to prevent blocking indefinitely
+      try {
+        await _settingsLoadCompleter!.future.timeout(const Duration(seconds: 2));
+      } catch (e) {
+        print("⚠️ Settings load timed out, proceeding with defaults.");
+      }
     }
   }
 
