@@ -445,12 +445,11 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     // Check Button Taps
     if (dashButton.containsPoint(tapPos - hud.position)) {
-      // Logic handled in onDragStart for responsiveness, but fallback here
-      // player.dash(player.moveDirection ?? Vector2(1, 0));
+      player.dash(player.moveDirection ?? Vector2(1, 0));
       return;
     }
     if (slashButton.containsPoint(tapPos - hud.position)) {
-      // player.slash();
+      player.slash();
       return;
     }
 
