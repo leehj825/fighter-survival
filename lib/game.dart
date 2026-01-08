@@ -155,11 +155,8 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
   @override
   Future<void> onLoad() async {
-    // 1. Initialize Audio Context (Fixes pausing issue)
-    await AudioSynth.initSystem();
-
-    // 2. Start the Sequenced Music
-    AudioSynth.startMusic();
+    // Switch to Intense Game Music
+    AudioSynth.playGameMusic();
 
     // Create World
     world = World();
