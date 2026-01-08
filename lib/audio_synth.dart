@@ -12,10 +12,10 @@ class AudioSynth {
     final AudioContext audioContext = AudioContext(
       iOS: AudioContextIOS(
         category: AVAudioSessionCategory.ambient, // Allow mixing
-        options: [
+        options: {
           AVAudioSessionOptions.mixWithOthers,
           AVAudioSessionOptions.duckOthers
-        ],
+        },
       ),
       android: AudioContextAndroid(
         isSpeakerphoneOn: true,
