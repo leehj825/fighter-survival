@@ -2,10 +2,15 @@ import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'game.dart';
 import 'managers.dart';
+import 'audio_synth.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await GameData().init();
+
+  // 1. Initialize Audio Context Globally
+  await AudioSynth.initSystem();
+
   runApp(const MaterialApp(home: MainMenu()));
 }
 
@@ -22,6 +27,9 @@ class _MainMenuState extends State<MainMenu> {
   void initState() {
     super.initState();
     GameData().addListener(_onGameDataChanged);
+
+    // 2. Play Menu Music on Start
+    AudioSynth.playMenuMusic();
   }
 
   @override

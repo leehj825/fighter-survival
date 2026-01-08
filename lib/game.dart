@@ -12,6 +12,7 @@ import 'grid_background.dart';
 import 'hud.dart';
 import 'managers.dart';
 import 'visual_effects.dart';
+import 'audio_synth.dart';
 
 /// Extension for safe vector normalization
 extension SafeVector2 on Vector2 {
@@ -154,6 +155,9 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
   @override
   Future<void> onLoad() async {
+    // Switch to Intense Game Music
+    AudioSynth.playGameMusic();
+
     // Create World
     world = World();
 
@@ -195,6 +199,12 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     // Initial Wave
     _spawnWave();
+  }
+
+  @override
+  void onRemove() {
+    AudioSynth.stopMusic();
+    super.onRemove();
   }
 
   @override
@@ -795,6 +805,11 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   void shoot(Vector2 dir) {
     // Basic cooldown for shooting? Let's say 0.3s
     // For now, no strict cooldown was requested, but let's add a small one to prevent spam lag
+
+    // Use variant based on damage/upgrades
+    int sfxType = damageMult > 1.5 ? 1 : 0;
+    AudioSynth.playShoot(variant: sfxType);
+
     gameRef.world.add(PlayerProjectile(position, dir, damageMult));
   }
 
@@ -816,6 +831,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     health = maxHealth;
 
     gameRef.hud.showStory("LEVEL UP! SYSTEMS RESTORED.");
+    AudioSynth.playPowerUp();
     gameRef.world.add(VisualEffects.createExplosion(position));
     gameRef.cameraShake(1.0);
   }
@@ -823,6 +839,9 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   @override
   void takeDamage(int amount) {
     if (_damageCooldown > 0 || isDashing) return;
+
+    // When player gets hit
+    AudioSynth.playShoot(variant: 2); // Use low pitch "thud" for player damage
 
     health -= amount;
     _damageCooldown = 1.0;
@@ -1013,6 +1032,8 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       // Drop XP Gem
       gameRef.world.add(XpGem(isElite ? 50 : 10)..position = position);
 
+      // Play louder explosion for Elite enemies or Bosses
+      AudioSynth.playExplosion(isLarge: isElite);
       gameRef.world.add(VisualEffects.createExplosion(position));
       gameRef.cameraShake(1.0);
     }
