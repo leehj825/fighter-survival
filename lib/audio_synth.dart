@@ -7,14 +7,35 @@ class AudioSynth {
   static final AudioPlayer _musicPlayer = AudioPlayer();
   static final Random _rng = Random();
 
-  /// Generates and plays a 1-minute procedural song
-  static Future<void> initMusic() async {
-    // Generate ~51 seconds at 150 BPM (128 beats)
-    // 22050Hz is sufficient for retro style and saves memory/CPU
-    final musicBytes = _generateSongBuffer();
+  /// 1. Fix: Configure Global Audio Context to MIX sounds instead of pausing them
+  static Future<void> initSystem() async {
+    final AudioContext audioContext = AudioContext(
+      iOS: AudioContextIOS(
+        category: AVAudioSessionCategory.ambient, // Allow mixing
+        options: [
+          AVAudioSessionOptions.mixWithOthers,
+          AVAudioSessionOptions.duckOthers
+        ],
+      ),
+      android: AudioContextAndroid(
+        isSpeakerphoneOn: true,
+        stayAwake: false,
+        contentType: AndroidContentType.music,
+        usageType: AndroidUsageType.game,
+        audioFocus: AndroidAudioFocus.none, // Do not request focus (prevents pausing)
+      ),
+    );
+    await AudioPlayer.global.setAudioContext(audioContext);
+  }
+
+  /// Generates and plays the "Heroic" composed track
+  static Future<void> startMusic() async {
+    final musicBytes = _generateSequencedSong();
 
     await _musicPlayer.setReleaseMode(ReleaseMode.loop);
-    await _musicPlayer.setVolume(0.35); // Background volume
+    await _musicPlayer.setVolume(0.4);
+    // Use MediaPlayer mode for long music tracks to save CPU
+    await _musicPlayer.setPlayerMode(PlayerMode.mediaPlayer);
     await _musicPlayer.play(BytesSource(musicBytes));
   }
 
@@ -22,28 +43,22 @@ class AudioSynth {
     _musicPlayer.stop();
   }
 
-  // --- Sound Effects (Fire & Forget) ---
+  // --- Optimized SFX ---
 
-  /// Shoot sound with pitch variation
-  /// variants: 0 = Normal, 1 = Power High, 2 = Heavy Low
   static Future<void> playShoot({int variant = 0}) async {
     final player = AudioPlayer();
+    // 2. Fix: Use Low Latency for SFX to avoid consuming heavy MediaPlayers
+    await player.setPlayerMode(PlayerMode.lowLatency);
 
     double baseFreq = 800.0;
-    double duration = 0.14;
+    double duration = 0.12;
 
-    // Random Variance (+/- 10%)
-    double pitchVar = 0.9 + (_rng.nextDouble() * 0.2);
-
-    if (variant == 1) { baseFreq = 1200.0; duration = 0.1; }
-    if (variant == 2) { baseFreq = 400.0; duration = 0.25; }
+    if (variant == 1) { baseFreq = 1200.0; duration = 0.08; } // High
+    if (variant == 2) { baseFreq = 400.0; duration = 0.2; }   // Low
 
     final bytes = _generateWave((t) {
-      // Fast sweep down
-      double freq = (baseFreq * pitchVar) - (baseFreq * 2.5 * (t / duration));
-      if (freq < 100) freq = 100;
-      // Pulse wave
-      return (sin(2 * pi * freq * t) > 0.1) ? 0.5 : -0.5;
+      double freq = baseFreq - (baseFreq * 0.8 * (t / duration));
+      return (sin(2 * pi * freq * t) > 0) ? 0.3 : -0.3; // Square wave
     }, duration);
 
     await player.play(BytesSource(bytes));
@@ -52,24 +67,23 @@ class AudioSynth {
 
   static Future<void> playExplosion({bool isLarge = false}) async {
     final player = AudioPlayer();
-    double duration = isLarge ? 0.8 : 0.4;
+    await player.setPlayerMode(PlayerMode.lowLatency);
 
+    double duration = isLarge ? 0.6 : 0.3;
     final bytes = _generateWave((t) {
-      // White noise with exponential decay
-      double noise = (_rng.nextDouble() * 2.0) - 1.0;
-      double decay = pow(1.0 - (t / duration), 2).toDouble();
-      return noise * decay;
+      // Noise with decay
+      return ((_rng.nextDouble() * 2) - 1) * pow(1.0 - (t / duration), 3);
     }, duration);
 
-    await player.setVolume(0.6);
+    await player.setVolume(0.5);
     await player.play(BytesSource(bytes));
     player.onPlayerComplete.listen((_) => player.dispose());
   }
 
   static Future<void> playPowerUp() async {
     final player = AudioPlayer();
+    await player.setPlayerMode(PlayerMode.lowLatency);
     final bytes = _generateWave((t) {
-      // Ascending Arpeggio effect
       double freq = 400 + (t * 4000);
       return sin(2 * pi * freq * t) * 0.5;
     }, 0.5);
@@ -77,88 +91,86 @@ class AudioSynth {
     player.onPlayerComplete.listen((_) => player.dispose());
   }
 
-  // --- Music Generator Logic ---
+  // --- Music Sequencer (The "Actual Music") ---
 
-  static Uint8List _generateSongBuffer() {
+  static Uint8List _generateSequencedSong() {
     const int sampleRate = 22050;
-    const double bpm = 140;
-    const double beatDur = 60 / bpm; // ~0.42 seconds per beat
-    const int totalBeats = 128; // ~54 seconds
-    final int numSamples = (totalBeats * beatDur * sampleRate).toInt();
+    const double bpm = 160;
+    const double beatDur = 60 / bpm; // ~0.375s
+    const int totalBeats = 128; // 32 Bars
 
-    // Frequencies for C Minor scale: C3, D3, Eb3, F3, G3, Ab3, Bb3, C4
-    final scale = [130.8, 146.8, 155.6, 174.6, 196.0, 207.7, 233.1, 261.6];
-
-    // Song Structure (Chord Progression Indices in Scale)
-    // 0=C, 2=Eb, 4=G, 5=Ab, 6=Bb
-    final progression = [
-      0, 0, 0, 0, // Intro (C)
-      5, 5, 6, 6, // Ab -> Bb
-      0, 0, 2, 4, // C -> Eb -> G
-      5, 4, 2, 0, // Ab -> G -> Eb -> C
-    ]; // 16 blocks of 8 beats = 128 beats
-
-    return _createWav(numSamples, sampleRate, (i) {
+    return _createWav((totalBeats * beatDur * sampleRate).toInt(), sampleRate, (i) {
       double t = i / sampleRate;
       double beatPos = t / beatDur;
-      int currentBeat = beatPos.floor();
-      int measure = (currentBeat ~/ 8); // Change chord every 8 beats
+      int beatIndex = beatPos.floor();
       double localBeat = beatPos % 1.0;
 
-      // 1. DETERMINE ROOT NOTE
-      int chordIndex = progression[measure % progression.length];
-      double rootFreq = scale[chordIndex % scale.length];
+      // --- PATTERN DEFINITIONS (MIDI Note Numbers) ---
+      // 0 = Rest. 60 = C4 (Middle C)
 
-      // --- VOICE 1: BASS (Square Wave) ---
-      // Plays on beats 0, 2, 4, 6... or distinct rhythm
-      double bass = 0.0;
-      double bassFreq = rootFreq / 2; // Octave down
-      // Simple bass rhythm: Pum-Pum-Pum-Pum
-      if (localBeat < 0.8) {
-         bass = (sin(2 * pi * bassFreq * t) > 0) ? 0.6 : -0.6;
-      }
+      // BASSLINE (Repeat pattern)
+      // C2(36) -> Bb1(34) -> Ab1(32) -> G1(31)
+      int bar = (beatIndex ~/ 4) % 16;
+      int bassNote = 36;
+      if (bar >= 4 && bar < 8) bassNote = 34; // Bb
+      if (bar >= 8 && bar < 12) bassNote = 32; // Ab
+      if (bar >= 12) bassNote = 31; // G
 
-      // --- VOICE 2: MELODY (Triangle Wave) ---
-      double lead = 0.0;
-      if (measure >= 4) { // Kick in after intro
-        // Arpeggiator pattern based on beat
-        int noteOffset = (currentBeat % 4) * 2; // 0, 2, 4, 6 (1-3-5-7 intervals)
-        double leadFreq = scale[(chordIndex + noteOffset) % scale.length] * 2; // Octave up
+      // MELODY (Simple Heroic Theme)
+      int leadNote = 0;
+      int localBarBeat = beatIndex % 16;
 
-        // Envelope: Short pluck
-        double env = max(0, 1.0 - (localBeat * 3.0));
-        // Vibrato
-        leadFreq += sin(t * 15) * 5;
-        lead = (asin(sin(2 * pi * leadFreq * t)) * 2 / pi) * env * 0.5;
-      }
+      // "Verse" Melody Pattern (Defined sequence)
+      const List<int> melodyPattern = [
+        60, 0, 60, 63,  67, 0, 63, 0,  // C C Eb G ... Eb
+        65, 0, 65, 63,  62, 60, 58, 55 // F F Eb D C Bb G
+      ];
 
-      // --- VOICE 3: DRUMS (Noise) ---
-      double drum = 0.0;
-      // Kick on 0, 2, 4... Snare on 1, 3, 5...
-      bool isKick = (currentBeat % 2 == 0);
-      double drumEnv = max(0, 1.0 - (localBeat * (isKick ? 4.0 : 8.0)));
-
-      if (isKick) {
-        // Low freq sine sweep + noise
-        drum = sin(2 * pi * (100 - localBeat * 100) * t) * drumEnv * 0.8;
-      } else {
-        // Snare (White noise)
-        drum = ((_rng.nextDouble() * 2) - 1) * drumEnv * 0.6;
+      if (bar < 8) { // First half: Verse
+         leadNote = melodyPattern[localBarBeat % melodyPattern.length];
+      } else { // Second half: High Energy Arpeggios
+         int chordRoot = bassNote + 24; // 2 octaves up
+         int arpStep = beatIndex % 4;
+         if (arpStep == 0) leadNote = chordRoot;
+         if (arpStep == 1) leadNote = chordRoot + 3; // Minor 3rd
+         if (arpStep == 2) leadNote = chordRoot + 7; // 5th
+         if (arpStep == 3) leadNote = chordRoot + 12; // Octave
       }
 
       // --- MIXER ---
-      // Combine and clamp
-      double mix = (bass * 0.4) + (lead * 0.3) + (drum * 0.3);
+      double mix = 0.0;
+
+      // 1. BASS (Square Wave)
+      if (beatIndex % 1 == 0) {
+         double freq = _midiToFreq(bassNote);
+         double env = 1.0 - localBeat;
+         mix += (sin(2 * pi * freq * t) > 0 ? 0.4 : -0.4) * env;
+      }
+
+      // 2. LEAD (Triangle Wave)
+      if (leadNote > 0) {
+        double freq = _midiToFreq(leadNote);
+        mix += (asin(sin(2 * pi * freq * t)) * 2 / pi) * 0.3;
+      }
+
+      // 3. DRUMS
+      bool isKick = (beatIndex % 2 == 0);
+      double drumEnv = pow(1.0 - localBeat, 4).toDouble();
+      if (isKick) {
+        mix += sin(2 * pi * 80 * (1 - localBeat) * t) * drumEnv * 0.5;
+      } else {
+        mix += ((_rng.nextDouble() * 2) - 1) * drumEnv * 0.4;
+      }
+
       return mix.clamp(-1.0, 1.0);
     });
   }
 
-  // --- WAV Header Helper ---
-  static Uint8List _generateWave(double Function(double) generator, double duration) {
-    const int rate = 22050;
-    return _createWav((duration * rate).toInt(), rate, (i) => generator(i / rate));
+  static double _midiToFreq(int note) {
+    return 440.0 * pow(2, (note - 69) / 12);
   }
 
+  // --- WAV Helper ---
   static Uint8List _createWav(int numSamples, int sampleRate, double Function(int) getSample) {
     final int fileSize = 36 + numSamples * 2;
     final ByteData header = ByteData(44);
@@ -194,5 +206,10 @@ class AudioSynth {
     for (int i = 0; i < value.length; i++) {
       data.setUint8(offset + i, value.codeUnitAt(i));
     }
+  }
+
+  static Uint8List _generateWave(double Function(double) generator, double duration) {
+    const int rate = 22050;
+    return _createWav((duration * rate).toInt(), rate, (i) => generator(i / rate));
   }
 }
