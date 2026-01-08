@@ -69,11 +69,51 @@ class VirtualJoystick extends PositionComponent with HasVisibility {
   }
 }
 
+class ActionButton extends PositionComponent {
+  final String label;
+  final Color color;
+  final Paint _bgPaint;
+  final Paint _strokePaint;
+  late TextPainter _textPainter;
+
+  ActionButton({required this.label, required this.color})
+      : _bgPaint = Paint()..color = color.withOpacity(0.5),
+        _strokePaint = Paint()
+          ..color = Colors.white.withOpacity(0.8)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+        super(anchor: Anchor.center, size: Vector2.all(80));
+
+  @override
+  Future<void> onLoad() async {
+    _textPainter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    _textPainter.layout();
+  }
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawCircle(Offset(size.x / 2, size.y / 2), size.x / 2, _bgPaint);
+    canvas.drawCircle(Offset(size.x / 2, size.y / 2), size.x / 2, _strokePaint);
+    _textPainter.paint(
+      canvas,
+      Offset((size.x - _textPainter.width) / 2, (size.y - _textPainter.height) / 2),
+    );
+  }
+}
+
 /// The main Game class.
 class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   late Player player;
   late Hud hud;
   late VirtualJoystick joystick;
+  late ActionButton dashButton;
+  late ActionButton slashButton;
 
   // Game State
   int killCount = 0;
@@ -94,24 +134,9 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
   // --- Input State ---
   int? _movePointerId;
-  int? _actionPointerId;
 
   // Movement State
   Vector2? _moveStartPos;
-
-  // Action Gesture State
-  Vector2? _actionStartPos;
-  Vector2? _lastActionPos;
-  DateTime? _lastActionTime;
-
-  // Slash Detection State
-  double _accumulatedRotation = 0.0;
-  static const double _slashTimeWindow = 1.0;
-  double _slashWindowTimer = 0.0;
-  static const double _slashThreshold = 250.0 * (pi / 180.0);
-
-  // Tweakable Variable for Dash Sensitivity
-  static const double dashVelocityThreshold = 2500.0;
 
   // Camera Shake State
   double _shakeTimer = 0.0;
@@ -155,8 +180,23 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     joystick = VirtualJoystick()..priority = 200;
     hud.add(joystick); // Add to HUD (Root Component) to ensure screen-space alignment
 
+    // Add Action Buttons
+    dashButton = ActionButton(label: "DASH", color: Colors.yellowAccent)..priority = 200;
+    slashButton = ActionButton(label: "SLASH", color: Colors.redAccent)..priority = 200;
+    hud.add(dashButton);
+    hud.add(slashButton);
+
     // Initial Wave
     _spawnWave();
+  }
+
+  @override
+  void onGameResize(Vector2 size) {
+    super.onGameResize(size);
+    if (isLoaded) {
+      dashButton.position = Vector2(size.x - 80, size.y - 80);
+      slashButton.position = Vector2(size.x - 180, size.y - 60);
+    }
   }
 
   void _spawnObstacles() {
@@ -268,14 +308,6 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
         wave++;
         _spawnWave();
         _waveTimer = 0.0;
-      }
-    }
-
-    // Slash Timer Logic
-    if (_slashWindowTimer > 0) {
-      _slashWindowTimer -= dt;
-      if (_slashWindowTimer <= 0) {
-        _accumulatedRotation = 0.0;
       }
     }
 
@@ -405,10 +437,22 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   void onTapDown(TapDownInfo info) {
     if (gameOver) return;
 
+    final Vector2 tapPos = info.eventPosition.widget;
+
+    // Check Button Taps
+    if (dashButton.containsPoint(tapPos - hud.position)) {
+      // Logic handled in onDragStart for responsiveness, but fallback here
+      // player.dash(player.moveDirection ?? Vector2(1, 0));
+      return;
+    }
+    if (slashButton.containsPoint(tapPos - hud.position)) {
+      // player.slash();
+      return;
+    }
+
     // Check if blaster is unlocked
     if (GameData().unlockBlaster) {
        // Fire towards tap position
-       Vector2 tapPos = info.eventPosition.widget;
        Vector2 screenCenter = size / 2;
        Vector2 dir = (tapPos - screenCenter).safeNormalized();
 
@@ -428,6 +472,16 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     final Vector2 startPos = info.eventPosition.widget;
 
+    // Check Buttons
+    if (dashButton.containsPoint(startPos)) {
+        player.dash(player.moveDirection ?? Vector2(1, 0));
+        return;
+    }
+    if (slashButton.containsPoint(startPos)) {
+        player.slash();
+        return;
+    }
+
     // 1. Assign Movement Pointer (First Touch)
     if (_movePointerId == null) {
       _movePointerId = pointerId;
@@ -437,14 +491,6 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       joystick.position = startPos;
       joystick.isVisible = true;
       joystick.reset();
-    }
-    // 2. Assign Action Pointer (Second Touch)
-    else if (_actionPointerId == null) {
-      _actionPointerId = pointerId;
-      _actionStartPos = startPos;
-      _lastActionPos = startPos;
-      _lastActionTime = DateTime.now();
-      _resetGestureLogic();
     }
   }
 
@@ -465,54 +511,6 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
         player.moveDirection = Vector2.zero();
       }
     }
-
-    // Handle Actions (Dash/Slash)
-    if (pointerId == _actionPointerId && _lastActionPos != null) {
-      final DateTime now = DateTime.now();
-
-      // 1. Dash (Flick)
-      if (_lastActionTime != null) {
-        final double dtSeconds = now.difference(_lastActionTime!).inMicroseconds / 1000000.0;
-        if (dtSeconds > 0) {
-          final double dist = currentPos.distanceTo(_lastActionPos!);
-          final double velocity = dist / dtSeconds;
-
-          if (velocity > dashVelocityThreshold && dist > 10) {
-             Vector2 dashDir = currentPos - _lastActionPos!;
-             if (!dashDir.isNaN) {
-                player.dash(dashDir);
-             }
-          }
-        }
-      }
-
-      // 2. Slash (Circular)
-      if (!player.isSlashing && _actionStartPos != null) {
-        final Vector2 center = _actionStartPos!;
-        final Vector2 toFinger = currentPos - center;
-        final Vector2 prevToFinger = (_lastActionPos ?? currentPos) - center;
-
-        if (toFinger.length > 20 && prevToFinger.length > 20) {
-          final double currentAngle = atan2(toFinger.y, toFinger.x);
-          final double prevAngle = atan2(prevToFinger.y, prevToFinger.x);
-
-          double diff = currentAngle - prevAngle;
-          while (diff < -pi) diff += 2 * pi;
-          while (diff > pi) diff -= 2 * pi;
-
-          _accumulatedRotation += diff;
-          _slashWindowTimer = _slashTimeWindow;
-
-          if (_accumulatedRotation.abs() > _slashThreshold) {
-            player.slash();
-            _accumulatedRotation = 0.0;
-          }
-        }
-      }
-
-      _lastActionPos = currentPos;
-      _lastActionTime = now;
-    }
   }
 
   @override
@@ -532,18 +530,6 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       player.moveDirection = null;
       joystick.isVisible = false;
     }
-
-    if (pointerId == _actionPointerId) {
-      _actionPointerId = null;
-      _actionStartPos = null;
-      _lastActionPos = null;
-      _accumulatedRotation = 0.0;
-    }
-  }
-
-  void _resetGestureLogic() {
-    _accumulatedRotation = 0.0;
-    _slashWindowTimer = _slashTimeWindow;
   }
 
   void _resetGame() {
