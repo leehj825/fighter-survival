@@ -47,7 +47,9 @@ class _MainMenuState extends State<MainMenu> {
       MaterialPageRoute(
         builder: (context) => const GameScreen(),
       ),
-    );
+    ).then((_) {
+      AudioSynth.playMenuMusic();
+    });
   }
 
   void _openWorkshop() {
