@@ -196,6 +196,15 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     // Initial Wave
     _spawnWave();
+
+    // Start the music loop
+    AudioSynth.initMusic();
+  }
+
+  @override
+  void onRemove() {
+    AudioSynth.stopMusic();
+    super.onRemove();
   }
 
   @override
@@ -797,7 +806,10 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     // Basic cooldown for shooting? Let's say 0.3s
     // For now, no strict cooldown was requested, but let's add a small one to prevent spam lag
     gameRef.world.add(PlayerProjectile(position, dir, damageMult));
-    AudioSynth.playShoot();
+
+    // Variant 1 (High Pitch) if damageMult is high, else Variant 0
+    int variant = damageMult > 1.5 ? 1 : 0;
+    AudioSynth.playShoot(variant: variant);
   }
 
   void gainXp(int amount) {
@@ -826,6 +838,9 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   @override
   void takeDamage(int amount) {
     if (_damageCooldown > 0 || isDashing) return;
+
+    // When player gets hit
+    AudioSynth.playShoot(variant: 2); // Use low pitch "thud" for player damage
 
     health -= amount;
     _damageCooldown = 1.0;
@@ -1016,7 +1031,8 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       // Drop XP Gem
       gameRef.world.add(XpGem(isElite ? 50 : 10)..position = position);
 
-      AudioSynth.playExplosion();
+      // Play louder explosion for Elite enemies or Bosses
+      AudioSynth.playExplosion(isLarge: isElite);
       gameRef.world.add(VisualEffects.createExplosion(position));
       gameRef.cameraShake(1.0);
     }
