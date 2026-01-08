@@ -31,23 +31,19 @@ class AudioSynth {
     // Check if already playing (optional optimization)
     if (_musicPlayer.state == PlayerState.playing) return;
 
-    // The "Heroic" Theme (Previous Version)
-    final bytes = _generateSequencedSong(isGameTrack: false);
-    await _startLoop(bytes, volume: 0.5);
+    await _startLoop('audio/menu2.mp3', volume: 0.5);
   }
 
   static Future<void> playGameMusic() async {
-    // The "Cyberpunk" Theme (New Sophisticated Version)
-    final bytes = _generateSequencedSong(isGameTrack: true);
-    await _startLoop(bytes, volume: 0.4);
+    await _startLoop('audio/main2.mp3', volume: 0.4);
   }
 
-  static Future<void> _startLoop(Uint8List bytes, {required double volume}) async {
+  static Future<void> _startLoop(String assetPath, {required double volume}) async {
     await _musicPlayer.stop(); // Stop current track
     await _musicPlayer.setReleaseMode(ReleaseMode.loop);
     await _musicPlayer.setVolume(volume);
     await _musicPlayer.setPlayerMode(PlayerMode.mediaPlayer);
-    await _musicPlayer.play(BytesSource(bytes));
+    await _musicPlayer.play(AssetSource(assetPath));
   }
 
   static void stopMusic() {
