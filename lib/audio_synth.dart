@@ -31,11 +31,11 @@ class AudioSynth {
     // Check if already playing (optional optimization)
     if (_musicPlayer.state == PlayerState.playing) return;
 
-    await _startLoop('audio/menu2.mp3', volume: 0.5);
+    await _startLoop('audio/main2.mp3', volume: 0.5);
   }
 
   static Future<void> playGameMusic() async {
-    await _startLoop('audio/main2.mp3', volume: 0.4);
+    await _startLoop('audio/menu2.mp3', volume: 0.4);
   }
 
   static Future<void> _startLoop(String assetPath, {required double volume}) async {
