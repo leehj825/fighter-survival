@@ -466,9 +466,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   @override
   void onDragStart(int pointerId, DragStartInfo info) {
     if (gameOver) {
-       // Reset Game Logic if needed, or simple restart
-       _resetGame();
-       return;
+       return; // Do nothing, wait for UI button
     }
 
     final Vector2 startPos = info.eventPosition.widget;
@@ -600,6 +598,11 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     gameOver = true;
     GameData().addGems(runGems);
     overlays.add('GameOver');
+  }
+
+  void exitRun() {
+    GameData().addGems(runGems);
+    // No need to reset variables here as GameWidget disposal or resetGame handles it next time
   }
 }
 

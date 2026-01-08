@@ -90,4 +90,13 @@ class GameData extends ChangeNotifier {
     totalGems += amount;
     save();
   }
+
+  Future<void> resetProgress() async {
+    totalGems = 0;
+    levelHp = 0;
+    levelDash = 0;
+    levelShield = 0;
+    unlockBlaster = false;
+    await save();
+  }
 }
