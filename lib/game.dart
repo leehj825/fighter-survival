@@ -181,8 +181,12 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     hud.add(joystick); // Add to HUD (Root Component) to ensure screen-space alignment
 
     // Add Action Buttons
-    dashButton = ActionButton(label: "DASH", color: Colors.yellowAccent)..priority = 200;
-    slashButton = ActionButton(label: "SLASH", color: Colors.redAccent)..priority = 200;
+    dashButton = ActionButton(label: "DASH", color: Colors.yellowAccent)
+      ..priority = 200
+      ..position = Vector2(size.x - 80, size.y - 80);
+    slashButton = ActionButton(label: "SLASH", color: Colors.redAccent)
+      ..priority = 200
+      ..position = Vector2(size.x - 180, size.y - 60);
     hud.add(dashButton);
     hud.add(slashButton);
 
