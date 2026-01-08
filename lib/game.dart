@@ -12,7 +12,7 @@ import 'grid_background.dart';
 import 'hud.dart';
 import 'managers.dart';
 import 'visual_effects.dart';
-import 'audio_synth.dart';
+import 'sound_service.dart';
 
 /// Extension for safe vector normalization
 extension SafeVector2 on Vector2 {
@@ -156,7 +156,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   @override
   Future<void> onLoad() async {
     // Ensure music is playing (but don't restart if it is)
-    AudioSynth.playMainTheme();
+    SoundService.instance.playBackgroundMusic('audio/main2.mp3');
 
     // Create World
     world = World();
@@ -203,7 +203,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
   @override
   void onRemove() {
-    // AudioSynth.stopMusic(); // Keep music playing
+    // SoundService.instance.stopBackgroundMusic(); // Keep music playing
     super.onRemove();
   }
 
@@ -808,7 +808,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     // Use variant based on damage/upgrades
     int sfxType = damageMult > 1.5 ? 1 : 0;
-    AudioSynth.playShoot(variant: sfxType);
+    SoundService.instance.playShoot(variant: sfxType);
 
     gameRef.world.add(PlayerProjectile(position, dir, damageMult));
   }
@@ -831,7 +831,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     health = maxHealth;
 
     gameRef.hud.showStory("LEVEL UP! SYSTEMS RESTORED.");
-    AudioSynth.playPowerUp();
+    SoundService.instance.playPowerUp();
     gameRef.world.add(VisualEffects.createExplosion(position));
     gameRef.cameraShake(1.0);
   }
@@ -841,7 +841,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     if (_damageCooldown > 0 || isDashing) return;
 
     // When player gets hit
-    AudioSynth.playShoot(variant: 2); // Use low pitch "thud" for player damage
+    SoundService.instance.playShoot(variant: 2); // Use low pitch "thud" for player damage
 
     health -= amount;
     _damageCooldown = 1.0;
@@ -1033,7 +1033,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       gameRef.world.add(XpGem(isElite ? 50 : 10)..position = position);
 
       // Play louder explosion for Elite enemies or Bosses
-      AudioSynth.playExplosion(isLarge: isElite);
+      SoundService.instance.playExplosion(isLarge: isElite);
       gameRef.world.add(VisualEffects.createExplosion(position));
       gameRef.cameraShake(1.0);
     }

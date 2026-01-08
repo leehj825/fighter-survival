@@ -2,14 +2,14 @@ import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'game.dart';
 import 'managers.dart';
-import 'audio_synth.dart';
+import 'sound_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await GameData().init();
 
   // 1. Initialize Audio Context Globally
-  await AudioSynth.initSystem();
+  await SoundService.instance.init();
 
   runApp(const MaterialApp(home: MainMenu()));
 }
@@ -21,21 +21,32 @@ class MainMenu extends StatefulWidget {
   State<MainMenu> createState() => _MainMenuState();
 }
 
-class _MainMenuState extends State<MainMenu> {
+class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
   // We'll listen to GameData changes to update UI
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     GameData().addListener(_onGameDataChanged);
 
     // 2. Play App Music on Start
-    AudioSynth.playMainTheme();
+    SoundService.instance.playBackgroundMusic('audio/main2.mp3');
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     GameData().removeListener(_onGameDataChanged);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      SoundService.instance.pauseBackgroundMusic();
+    } else if (state == AppLifecycleState.resumed) {
+      SoundService.instance.resumeBackgroundMusic();
+    }
   }
 
   void _onGameDataChanged() {
@@ -230,9 +241,14 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   }
 }
 
-class SettingsDialog extends StatelessWidget {
+class SettingsDialog extends StatefulWidget {
   const SettingsDialog({super.key});
 
+  @override
+  State<SettingsDialog> createState() => _SettingsDialogState();
+}
+
+class _SettingsDialogState extends State<SettingsDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -243,6 +259,32 @@ class SettingsDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text("SETTINGS", style: TextStyle(color: Colors.white, fontSize: 24)),
+            const SizedBox(height: 20),
+
+            // Music Volume
+            _buildVolumeSlider(
+              label: "Music Volume",
+              value: SoundService.instance.musicVolumeMultiplier,
+              onChanged: (val) {
+                setState(() {
+                  SoundService.instance.setMusicVolumeMultiplier(val);
+                });
+              },
+            ),
+
+            const SizedBox(height: 10),
+
+            // Sound Volume
+            _buildVolumeSlider(
+              label: "Sound Volume",
+              value: SoundService.instance.soundVolumeMultiplier,
+              onChanged: (val) {
+                setState(() {
+                  SoundService.instance.setSoundVolumeMultiplier(val);
+                });
+              },
+            ),
+
             const SizedBox(height: 30),
             ElevatedButton(
               onPressed: () {
@@ -271,6 +313,26 @@ class SettingsDialog extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildVolumeSlider({required String label, required double value, required ValueChanged<double> onChanged}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "$label: ${(value * 100).toInt()}%",
+          style: const TextStyle(color: Colors.white70)
+        ),
+        Slider(
+          value: value,
+          onChanged: onChanged,
+          min: 0.0,
+          max: 1.0,
+          activeColor: Colors.cyanAccent,
+          inactiveColor: Colors.grey.shade800,
+        ),
+      ],
     );
   }
 }
