@@ -41,6 +41,72 @@ class _MainMenuState extends State<MainMenu> {
       ),
     );
   }
+
+  void _openWorkshop() {
+    showDialog(
+      context: context,
+      builder: (ctx) => const WorkshopDialog(),
+    );
+  }
+
+  void _openSettings() {
+    showDialog(
+      context: context,
+      builder: (ctx) => const SettingsDialog(),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.blueGrey.shade900,
+      body: Container(
+        width: double.infinity,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text(
+              "FIGHTER SURVIVAL",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.cyanAccent),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              "Total Gems: ${GameData().totalGems}",
+              style: const TextStyle(fontSize: 20, color: Colors.amber),
+            ),
+            const SizedBox(height: 50),
+            ElevatedButton(
+              onPressed: _startGame,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
+                backgroundColor: Colors.green,
+              ),
+              child: const Text("PLAY", style: TextStyle(fontSize: 24)),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _openWorkshop,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                backgroundColor: Colors.purple,
+              ),
+              child: const Text("WORKSHOP", style: TextStyle(fontSize: 20)),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _openSettings,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                backgroundColor: Colors.grey,
+              ),
+              child: const Text("SETTINGS", style: TextStyle(fontSize: 20)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class GameScreen extends StatefulWidget {
@@ -152,72 +218,6 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
           },
         ),
       ),
-    );
-  }
-
-  void _openWorkshop() {
-    showDialog(
-      context: context,
-      builder: (ctx) => const WorkshopDialog(),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.blueGrey.shade900,
-      body: Container(
-        width: double.infinity,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              "FIGHTER SURVIVAL",
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.cyanAccent),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              "Total Gems: ${GameData().totalGems}",
-              style: const TextStyle(fontSize: 20, color: Colors.amber),
-            ),
-            const SizedBox(height: 50),
-            ElevatedButton(
-              onPressed: _startGame,
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
-                backgroundColor: Colors.green,
-              ),
-              child: const Text("PLAY", style: TextStyle(fontSize: 24)),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _openWorkshop,
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
-                backgroundColor: Colors.purple,
-              ),
-              child: const Text("WORKSHOP", style: TextStyle(fontSize: 20)),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _openSettings,
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
-                backgroundColor: Colors.grey,
-              ),
-              child: const Text("SETTINGS", style: TextStyle(fontSize: 20)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _openSettings() {
-    showDialog(
-      context: context,
-      builder: (ctx) => const SettingsDialog(),
     );
   }
 }
