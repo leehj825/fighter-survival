@@ -69,11 +69,50 @@ class VirtualJoystick extends PositionComponent with HasVisibility {
   }
 }
 
+class ActionButton extends PositionComponent {
+  final String label;
+  final Color color;
+  final Paint _bgPaint;
+  final Paint _strokePaint;
+  late TextPainter _textPainter;
+
+  ActionButton({required this.label, required this.color})
+      : _bgPaint = Paint()..color = color.withOpacity(0.5),
+        _strokePaint = Paint()
+          ..color = Colors.white.withOpacity(0.8)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+        super(anchor: Anchor.center, size: Vector2.all(80));
+
+  @override
+  Future<void> onLoad() async {
+    _textPainter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    _textPainter.layout();
+  }
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawCircle(Offset(size.x / 2, size.y / 2), size.x / 2, _bgPaint);
+    canvas.drawCircle(Offset(size.x / 2, size.y / 2), size.x / 2, _strokePaint);
+    _textPainter.paint(
+      canvas,
+      Offset((size.x - _textPainter.width) / 2, (size.y - _textPainter.height) / 2),
+    );
+  }
+}
+
 /// The main Game class.
 class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   late Player player;
   late Hud hud;
   late VirtualJoystick joystick;
+  late ActionButton slashButton;
 
   // Game State
   int killCount = 0;
@@ -100,15 +139,8 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   Vector2? _moveStartPos;
 
   // Action Gesture State
-  Vector2? _actionStartPos;
   Vector2? _lastActionPos;
   DateTime? _lastActionTime;
-
-  // Slash Detection State
-  double _accumulatedRotation = 0.0;
-  static const double _slashTimeWindow = 1.0;
-  double _slashWindowTimer = 0.0;
-  static const double _slashThreshold = 250.0 * (pi / 180.0);
 
   // Tweakable Variable for Dash Sensitivity
   static const double dashVelocityThreshold = 2500.0;
@@ -128,6 +160,11 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     // Initialize Player with Stats from GameData
     player = Player()..anchor = Anchor.center;
     world.add(player);
+
+    // Add Orbital Shield (If Unlocked/Leveled)
+    if (GameData().levelShield > 0) {
+      world.add(OrbitalShield(player));
+    }
 
     // Add Infinite Background (Grid)
     world.add(GridBackground());
@@ -150,8 +187,22 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     joystick = VirtualJoystick()..priority = 200;
     hud.add(joystick); // Add to HUD (Root Component) to ensure screen-space alignment
 
+    // Add Action Buttons
+    slashButton = ActionButton(label: "SLASH", color: Colors.redAccent)
+      ..priority = 200
+      ..position = Vector2(size.x - 100, size.y - 80);
+    hud.add(slashButton);
+
     // Initial Wave
     _spawnWave();
+  }
+
+  @override
+  void onGameResize(Vector2 size) {
+    super.onGameResize(size);
+    if (isLoaded) {
+      slashButton.position = Vector2(size.x - 100, size.y - 80);
+    }
   }
 
   void _spawnObstacles() {
@@ -166,6 +217,28 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       // Don't spawn on top of player
       if (pos.length > 200) {
         world.add(Obstacle(radius: isBig ? 40 : 20, height: isBig ? 60 : 30)..position = pos);
+      }
+    }
+
+    // Add Barrels randomly
+    for (int i = 0; i < 8; i++) {
+      Vector2 pos = Vector2(
+        (rng.nextDouble() - 0.5) * 1800,
+        (rng.nextDouble() - 0.5) * 1800,
+      );
+      if (pos.length > 200) {
+        world.add(Barrel()..position = pos);
+      }
+    }
+
+    // Add Spike Traps
+    for (int i = 0; i < 5; i++) {
+      Vector2 pos = Vector2(
+        (rng.nextDouble() - 0.5) * 1800,
+        (rng.nextDouble() - 0.5) * 1800,
+      );
+      if (pos.length > 200) {
+        world.add(SpikeTrap()..position = pos);
       }
     }
   }
@@ -205,7 +278,9 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     if (isEliteWave) {
       // Spawn Boss
-      world.add(Enemy(isElite: true)..position = player.position + Vector2(600, 0));
+      // Randomly pick a modifier
+      final modifier = EnemyModifier.values[rng.nextInt(EnemyModifier.values.length)];
+      world.add(Enemy(isElite: true, modifier: modifier)..position = player.position + Vector2(600, 0));
     }
   }
 
@@ -242,14 +317,6 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       }
     }
 
-    // Slash Timer Logic
-    if (_slashWindowTimer > 0) {
-      _slashWindowTimer -= dt;
-      if (_slashWindowTimer <= 0) {
-        _accumulatedRotation = 0.0;
-      }
-    }
-
     // --- Y-SORTING ---
     // Sort components by Y position for depth (2.5D view)
     for (final child in world.children) {
@@ -260,17 +327,39 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     // NEW: XP Collection Loop
     for (final gem in world.children.whereType<XpGem>()) {
-      if (player.position.distanceTo(gem.position) < 100) {
-        // Magnet
-        gem.position.add((player.position - gem.position).safeNormalized() * 300 * dt);
-        if (player.position.distanceTo(gem.position) < 10) {
-          // In new logic, gems are also currency.
-          // We treat "XP Gems" as the currency source for now.
+      bool collected = false;
+      if (gem.isMagnetized) {
+          // Fast magnetic pull
+          gem.position.add((player.position - gem.position).safeNormalized() * 800 * dt);
+          if (player.position.distanceTo(gem.position) < 20) {
+             collected = true;
+          }
+      } else {
+        if (player.position.distanceTo(gem.position) < 100) {
+          // Normal magnetic pull
+          gem.position.add((player.position - gem.position).safeNormalized() * 300 * dt);
+          if (player.position.distanceTo(gem.position) < 10) {
+             collected = true;
+          }
+        }
+      }
+
+      if (collected) {
           runGems += gem.amount;
           player.gainXp(gem.amount);
           gem.removeFromParent();
-        }
       }
+    }
+
+    // Magnet Item Collection Loop
+    for (final magnet in world.children.whereType<MagnetItem>()) {
+        if (player.position.distanceTo(magnet.position) < (player.size.x / 2 + magnet.size.x / 2)) {
+            // Activate Magnet
+            for (final gem in world.children.whereType<XpGem>()) {
+                gem.isMagnetized = true;
+            }
+            magnet.removeFromParent();
+        }
     }
 
     // --- COLLISION LOGIC ---
@@ -296,7 +385,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
         // Enemy vs Obstacle
         for (final other in world.children) {
-          if (other is Enemy) {
+          if (other is Enemy && other.modifier != EnemyModifier.ghostly) { // Ghostly enemies can pass through obstacles
              double distE = other.position.distanceTo(child.position);
              double radiusE = (other.size.x / 2) + child.radius;
              if (distE < radiusE) {
@@ -313,6 +402,16 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
              }
           }
         }
+      }
+
+      // Barrel Collision
+      if (child is Barrel) {
+          // Player Body vs Barrel
+          double distP = player.position.distanceTo(child.position);
+          double radiusP = (player.size.x / 2) + child.radius;
+          if (distP < radiusP) {
+             child.takeDamage(); // Explode on contact
+          }
       }
 
       // 2. Combat
@@ -344,10 +443,17 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   void onTapDown(TapDownInfo info) {
     if (gameOver) return;
 
+    final Vector2 tapPos = info.eventPosition.widget;
+
+    // Check Button Taps
+    if (slashButton.containsPoint(tapPos - hud.position)) {
+      player.slash();
+      return;
+    }
+
     // Check if blaster is unlocked
     if (GameData().unlockBlaster) {
        // Fire towards tap position
-       Vector2 tapPos = info.eventPosition.widget;
        Vector2 screenCenter = size / 2;
        Vector2 dir = (tapPos - screenCenter).safeNormalized();
 
@@ -360,15 +466,19 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   @override
   void onDragStart(int pointerId, DragStartInfo info) {
     if (gameOver) {
-       // Reset Game Logic if needed, or simple restart
-       _resetGame();
-       return;
+       return; // Do nothing, wait for UI button
     }
 
     final Vector2 startPos = info.eventPosition.widget;
 
-    // 1. Assign Movement Pointer (First Touch)
-    if (_movePointerId == null) {
+    // 1. Check Button first
+    if (slashButton.containsPoint(startPos - hud.position)) {
+        // Handled by onTapDown usually, but if drag starts here, ignore it for dash/move
+        return;
+    }
+
+    // 2. Assign Movement Pointer (Left side)
+    if (_movePointerId == null && startPos.x < size.x / 2) {
       _movePointerId = pointerId;
       _moveStartPos = startPos;
 
@@ -377,13 +487,11 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       joystick.isVisible = true;
       joystick.reset();
     }
-    // 2. Assign Action Pointer (Second Touch)
+    // 3. Assign Action Pointer (Right side, Swipe for Dash)
     else if (_actionPointerId == null) {
       _actionPointerId = pointerId;
-      _actionStartPos = startPos;
       _lastActionPos = startPos;
       _lastActionTime = DateTime.now();
-      _resetGestureLogic();
     }
   }
 
@@ -405,11 +513,9 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       }
     }
 
-    // Handle Actions (Dash/Slash)
+    // Handle Dash Swipe
     if (pointerId == _actionPointerId && _lastActionPos != null) {
       final DateTime now = DateTime.now();
-
-      // 1. Dash (Flick)
       if (_lastActionTime != null) {
         final double dtSeconds = now.difference(_lastActionTime!).inMicroseconds / 1000000.0;
         if (dtSeconds > 0) {
@@ -424,31 +530,6 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
           }
         }
       }
-
-      // 2. Slash (Circular)
-      if (!player.isSlashing && _actionStartPos != null) {
-        final Vector2 center = _actionStartPos!;
-        final Vector2 toFinger = currentPos - center;
-        final Vector2 prevToFinger = (_lastActionPos ?? currentPos) - center;
-
-        if (toFinger.length > 20 && prevToFinger.length > 20) {
-          final double currentAngle = atan2(toFinger.y, toFinger.x);
-          final double prevAngle = atan2(prevToFinger.y, prevToFinger.x);
-
-          double diff = currentAngle - prevAngle;
-          while (diff < -pi) diff += 2 * pi;
-          while (diff > pi) diff -= 2 * pi;
-
-          _accumulatedRotation += diff;
-          _slashWindowTimer = _slashTimeWindow;
-
-          if (_accumulatedRotation.abs() > _slashThreshold) {
-            player.slash();
-            _accumulatedRotation = 0.0;
-          }
-        }
-      }
-
       _lastActionPos = currentPos;
       _lastActionTime = now;
     }
@@ -474,15 +555,8 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     if (pointerId == _actionPointerId) {
       _actionPointerId = null;
-      _actionStartPos = null;
       _lastActionPos = null;
-      _accumulatedRotation = 0.0;
     }
-  }
-
-  void _resetGestureLogic() {
-    _accumulatedRotation = 0.0;
-    _slashWindowTimer = _slashTimeWindow;
   }
 
   void _resetGame() {
@@ -502,9 +576,21 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
        world.children.whereType<ParticleSystemComponent>().forEach((e) => e.removeFromParent());
        world.children.whereType<XpGem>().forEach((e) => e.removeFromParent());
        world.children.whereType<EnemyProjectile>().forEach((e) => e.removeFromParent());
+       world.children.whereType<Barrel>().forEach((e) => e.removeFromParent());
+       world.children.whereType<MagnetItem>().forEach((e) => e.removeFromParent());
+       world.children.whereType<Obstacle>().forEach((e) => e.removeFromParent());
+       world.children.whereType<SpikeTrap>().forEach((e) => e.removeFromParent());
+       world.children.whereType<OrbitalShield>().forEach((e) => e.removeFromParent());
 
        hud.storyText.text = "";
        _spawnWave();
+       _spawnObstacles(); // Respawn obstacles and barrels
+
+       // Respawn Shield with current stats
+       if (GameData().levelShield > 0) {
+         world.add(OrbitalShield(player));
+       }
+
        overlays.remove('GameOver');
   }
 
@@ -512,6 +598,11 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     gameOver = true;
     GameData().addGems(runGems);
     overlays.add('GameOver');
+  }
+
+  void exitRun() {
+    GameData().addGems(runGems);
+    // No need to reset variables here as GameWidget disposal or resetGame handles it next time
   }
 }
 
@@ -803,8 +894,14 @@ class PlayerProjectile extends PositionComponent with HasGameRef<RpgGame> {
         if (child.position.distanceTo(position) < (child.size.x / 2 + 5)) {
           child.takeDamage((5 * damageMult).toInt());
           removeFromParent();
-          break;
+          break; // Projectile destroyed
         }
+      } else if (child is Barrel) {
+          if (child.position.distanceTo(position) < (child.size.x / 2 + 5)) {
+            child.takeDamage();
+            removeFromParent();
+            break;
+          }
       }
     }
   }
@@ -824,10 +921,15 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   double _invulnerableTimer = 0.0;
   bool isElite = false;
 
+  final EnemyModifier modifier;
+  double _regenTimer = 0.0;
+  int _maxHealth = 2;
+
   final Paint _redPaint = Paint()..color = const Color(0xFFFF0000);
 
-  Enemy({this.isElite = false}) : super(size: Vector2.all(isElite ? 80 : 40), anchor: Anchor.center) {
+  Enemy({this.isElite = false, this.modifier = EnemyModifier.none}) : super(size: Vector2.all(isElite ? 80 : 40), anchor: Anchor.center) {
      if(isElite) health = health * 5;
+     _maxHealth = health;
   }
 
   @override
@@ -836,6 +938,16 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
     if (_invulnerableTimer > 0) {
       _invulnerableTimer -= dt;
+    }
+
+    // Regen logic
+    if (modifier == EnemyModifier.regen && health < _maxHealth && health > 0) {
+        _regenTimer += dt;
+        if (_regenTimer >= 1.0) {
+            _regenTimer = 0;
+            int healAmount = (_maxHealth * 0.01).ceil();
+            health = (health + healAmount).clamp(0, _maxHealth);
+        }
     }
 
     if (_knockbackVelocity.length > 5) {
@@ -854,7 +966,9 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
         if (dir.length < 5) {
           _pickNewTarget();
         } else {
-          position.add(dir.safeNormalized() * _speed * dt);
+          double currentSpeed = _speed;
+          if (modifier == EnemyModifier.swift) currentSpeed *= 1.5;
+          position.add(dir.safeNormalized() * currentSpeed * dt);
         }
       }
     }
@@ -890,6 +1004,12 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       removeFromParent();
       gameRef.killCount++;
 
+      // Magnet Drop Check (1 in 200 chance)
+      final Random rng = Random();
+      if (rng.nextInt(200) == 0) { // 0.5%
+          gameRef.world.add(MagnetItem()..position = position);
+      }
+
       // Drop XP Gem
       gameRef.world.add(XpGem(isElite ? 50 : 10)..position = position);
 
@@ -905,14 +1025,20 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     final double r = width / 2;
     final Offset center = (size / 2).toOffset();
 
+    // Opacity for Ghostly
+    int alpha = 255;
+    if (modifier == EnemyModifier.ghostly) {
+        alpha = (255 * 0.6).toInt();
+    }
+
     // Shadow
     canvas.drawOval(
       Rect.fromCenter(center: center, width: width, height: width * 0.6),
-      Paint()..color = Colors.black.withOpacity(0.3)
+      Paint()..color = Colors.black.withOpacity(0.3 * (alpha/255))
     );
 
     // Cylinder Body
-    final Paint bodyPaint = Paint()..color = const Color(0xFFAA0000); // Darker Red
+    final Paint bodyPaint = Paint()..color = const Color(0xFFAA0000).withAlpha(alpha); // Darker Red
     final Offset topCenter = center + Offset(0, -h);
 
     final Path bodyPath = Path();
@@ -924,7 +1050,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     canvas.drawPath(bodyPath, bodyPaint);
 
     // Top
-    canvas.drawCircle(topCenter, r, _redPaint);
+    canvas.drawCircle(topCenter, r, _redPaint..color = _redPaint.color.withAlpha(alpha));
 
     // Flash
     if (_invulnerableTimer > 0) {
@@ -973,6 +1099,7 @@ class DamageText extends PositionComponent {
 class XpGem extends PositionComponent {
   final int amount;
   double _lifeTime = 0.0;
+  bool isMagnetized = false;
 
   XpGem(this.amount) : super(size: Vector2.all(10), anchor: Anchor.center);
 
@@ -1068,6 +1195,214 @@ class ShooterEnemy extends Enemy {
     if (_shootTimer > 2.0) {
        _shootTimer = 0.0;
        gameRef.world.add(EnemyProjectile(position, gameRef.player.position));
+    }
+  }
+}
+
+enum EnemyModifier { none, swift, ghostly, regen }
+
+class Barrel extends PositionComponent with HasGameRef<RpgGame> {
+  int hp = 1;
+  final double radius = 25;
+  final double height = 40;
+
+  Barrel() : super(anchor: Anchor.center, size: Vector2.all(50));
+
+  @override
+  void render(Canvas canvas) {
+    // Red cylinder with danger marking
+    final Offset center = (size / 2).toOffset();
+    final double r = radius;
+    final double h = height;
+
+    // Shadow
+    canvas.drawOval(
+      Rect.fromCenter(center: center, width: width, height: width * 0.6),
+      Paint()..color = Colors.black.withOpacity(0.3)
+    );
+
+    // Body
+    final Offset topCenter = center + Offset(0, -h);
+    final Path bodyPath = Path();
+    bodyPath.moveTo(center.dx - r, center.dy);
+    bodyPath.lineTo(center.dx + r, center.dy);
+    bodyPath.lineTo(topCenter.dx + r, topCenter.dy);
+    bodyPath.lineTo(topCenter.dx - r, topCenter.dy);
+    bodyPath.close();
+    canvas.drawPath(bodyPath, Paint()..color = Colors.red.shade900);
+
+    // Top
+    canvas.drawCircle(topCenter, r, Paint()..color = Colors.red.shade700);
+
+    // Danger Marking (Yellow X on top)
+    final Paint markPaint = Paint()..color = Colors.yellow..strokeWidth = 4.0..style = PaintingStyle.stroke;
+    canvas.drawLine(topCenter + Offset(-10, -10), topCenter + Offset(10, 10), markPaint);
+    canvas.drawLine(topCenter + Offset(10, -10), topCenter + Offset(-10, 10), markPaint);
+
+    // Rim
+    canvas.drawCircle(topCenter, r, Paint()..style = PaintingStyle.stroke ..color = Colors.white.withOpacity(0.3));
+  }
+
+  void takeDamage() {
+     if (hp <= 0) return;
+     hp--;
+     if (hp <= 0) _explode();
+  }
+
+  void _explode() {
+    removeFromParent();
+    gameRef.world.add(VisualEffects.createExplosion(position, scale: 3.0));
+
+    // Deal damage
+    // Find entities in radius 150
+    for(final child in gameRef.world.children) {
+         if (child is Enemy) {
+             if (child.position.distanceTo(position) < 150) {
+                 child.takeDamage(500, knockbackDir: child.position - position);
+             }
+         } else if (child is Player) {
+              if (child.position.distanceTo(position) < 150) {
+                  child.takeDamage(500); // Massive damage
+              }
+         }
+    }
+    gameRef.cameraShake(5.0);
+  }
+}
+
+class MagnetItem extends PositionComponent with HasGameRef<RpgGame> {
+  late TextPainter _tp;
+
+  MagnetItem() : super(anchor: Anchor.center, size: Vector2.all(30));
+
+  @override
+  Future<void> onLoad() async {
+    const TextSpan span = TextSpan(
+        text: "M",
+        style: TextStyle(
+            color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold));
+    _tp = TextPainter(text: span, textDirection: TextDirection.ltr);
+    _tp.layout();
+  }
+
+  @override
+  void render(Canvas canvas) {
+    final double w = width;
+    final double h = height;
+
+    // Simple Square Icon with 'M'
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()..color = Colors.white);
+    canvas.drawRect(
+        Rect.fromLTWH(2, 2, w - 4, h - 4), Paint()..color = Colors.blue);
+
+    _tp.paint(canvas, Offset((w - _tp.width) / 2, (h - _tp.height) / 2));
+  }
+}
+
+class OrbitalShield extends PositionComponent with HasGameRef<RpgGame> {
+  final Player _player;
+  double _angle = 0.0;
+  final double _orbitRadius = 80.0;
+  late double _orbitSpeed;
+  late int _damage;
+
+  OrbitalShield(this._player) : super(size: Vector2.all(20), anchor: Anchor.center);
+
+  @override
+  Future<void> onLoad() async {
+     super.onLoad();
+     final int level = GameData().levelShield;
+     // Base speed 2.0, +0.5 per level beyond 1
+     _orbitSpeed = 2.0 + (level - 1) * 0.5;
+     // Base damage 10, +5 per level beyond 1
+     _damage = 10 + (level - 1) * 5;
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (_player.isRemoved) {
+      removeFromParent();
+      return;
+    }
+
+    _angle += _orbitSpeed * dt;
+    position = _player.position + Vector2(cos(_angle), sin(_angle)) * _orbitRadius;
+
+    // Collision Logic
+    for (final child in gameRef.world.children) {
+      if (child is Enemy) {
+        if (child.position.distanceTo(position) < (child.size.x / 2 + size.x / 2)) {
+           child.takeDamage(_damage, knockbackDir: child.position - _player.position);
+        }
+      } else if (child is EnemyProjectile) {
+        if (child.position.distanceTo(position) < (child.size.x / 2 + size.x / 2)) {
+           child.removeFromParent(); // Block projectile
+        }
+      }
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawCircle(Offset.zero, 8, Paint()..color = Colors.cyanAccent.withOpacity(0.8));
+    canvas.drawCircle(Offset.zero, 10, Paint()..style=PaintingStyle.stroke ..color = Colors.white.withOpacity(0.5) ..strokeWidth=2);
+  }
+}
+
+class SpikeTrap extends PositionComponent with HasGameRef<RpgGame> {
+  double _timer = 0.0;
+  int _state = 0; // 0: Safe, 1: Warning, 2: Active
+
+  SpikeTrap() : super(anchor: Anchor.center, size: Vector2.all(60));
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _timer += dt;
+
+    // Cycle: 2s Safe -> 1s Warning -> 1s Active
+    if (_state == 0 && _timer > 2.0) {
+      _state = 1;
+      _timer = 0;
+    } else if (_state == 1 && _timer > 1.0) {
+      _state = 2;
+      _timer = 0;
+    } else if (_state == 2 && _timer > 1.0) {
+      _state = 0;
+      _timer = 0;
+    }
+
+    if (_state == 2) {
+       // Damage Player
+       if (gameRef.player.position.distanceTo(position) < 30) {
+          gameRef.player.takeDamage(20);
+       }
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    // Base
+    canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 50, height: 50), Paint()..color = Colors.black.withOpacity(0.3));
+
+    if (_state == 0) {
+       // Safe (Dark Grey)
+       canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 40, height: 40), Paint()..color = Colors.grey.shade800);
+    } else if (_state == 1) {
+       // Warning (Flashing Red)
+       double flash = (sin(_timer * 20) + 1) / 2;
+       canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 40, height: 40), Paint()..color = Color.lerp(Colors.grey.shade800, Colors.red, flash)!);
+    } else {
+       // Active (Spikes)
+       canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 40, height: 40), Paint()..color = Colors.grey.shade600);
+       // Spikes
+       final Paint spikePaint = Paint()..color = Colors.white;
+       canvas.drawCircle(Offset(-10, -10), 5, spikePaint);
+       canvas.drawCircle(Offset(10, -10), 5, spikePaint);
+       canvas.drawCircle(Offset(-10, 10), 5, spikePaint);
+       canvas.drawCircle(Offset(10, 10), 5, spikePaint);
+       canvas.drawCircle(Offset(0, 0), 5, spikePaint);
     }
   }
 }

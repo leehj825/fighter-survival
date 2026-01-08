@@ -37,37 +37,7 @@ class _MainMenuState extends State<MainMenu> {
   void _startGame() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => SafeArea(
-          child: GameWidget(
-            game: RpgGame(),
-            overlayBuilderMap: {
-              'GameOver': (BuildContext context, RpgGame game) {
-                return Center(
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  color: Colors.black.withOpacity(0.8),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        "GAME OVER",
-                        style: TextStyle(color: Colors.red, fontSize: 32, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 20),
-                      ElevatedButton(
-                        onPressed: () {
-                          Navigator.of(context).pop(); // Go back to Main Menu
-                        },
-                        child: const Text("Return to Menu"),
-                      ),
-                    ],
-                    ),
-                  ),
-                );
-              }
-            },
-          ),
-        ),
+        builder: (context) => const GameScreen(),
       ),
     );
   }
@@ -76,6 +46,13 @@ class _MainMenuState extends State<MainMenu> {
     showDialog(
       context: context,
       builder: (ctx) => const WorkshopDialog(),
+    );
+  }
+
+  void _openSettings() {
+    showDialog(
+      context: context,
+      builder: (ctx) => const SettingsDialog(),
     );
   }
 
@@ -115,6 +92,173 @@ class _MainMenuState extends State<MainMenu> {
                 backgroundColor: Colors.purple,
               ),
               child: const Text("WORKSHOP", style: TextStyle(fontSize: 20)),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _openSettings,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                backgroundColor: Colors.grey,
+              ),
+              child: const Text("SETTINGS", style: TextStyle(fontSize: 20)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class GameScreen extends StatefulWidget {
+  const GameScreen({super.key});
+
+  @override
+  State<GameScreen> createState() => _GameScreenState();
+}
+
+class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
+  late RpgGame _game;
+
+  @override
+  void initState() {
+    super.initState();
+    _game = RpgGame();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      if (!_game.gameOver && !_game.paused) {
+        _game.paused = true;
+        _game.overlays.add('PauseMenu');
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) {
+        if (didPop) return;
+        if (!_game.gameOver && !_game.paused) {
+           _game.paused = true;
+           _game.overlays.add('PauseMenu');
+        }
+      },
+      child: SafeArea(
+        child: GameWidget(
+          game: _game,
+          overlayBuilderMap: {
+            'GameOver': (context, RpgGame game) {
+              return Center(
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  color: Colors.black.withOpacity(0.8),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        "GAME OVER",
+                        style: TextStyle(color: Colors.red, fontSize: 32, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 20),
+                      ElevatedButton(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                        },
+                        child: const Text("Return to Menu"),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+            'PauseMenu': (context, RpgGame game) {
+              return Center(
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  color: Colors.black.withOpacity(0.8),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        "PAUSED",
+                        style: TextStyle(color: Colors.cyan, fontSize: 32, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 20),
+                      ElevatedButton(
+                        onPressed: () {
+                          game.paused = false;
+                          game.overlays.remove('PauseMenu');
+                        },
+                        child: const Text("Resume"),
+                      ),
+                      const SizedBox(height: 10),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                        onPressed: () {
+                          game.exitRun();
+                          Navigator.of(context).pop();
+                        },
+                        child: const Text("Exit to Menu (Save Gems)"),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class SettingsDialog extends StatelessWidget {
+  const SettingsDialog({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.grey.shade900,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("SETTINGS", style: TextStyle(color: Colors.white, fontSize: 24)),
+            const SizedBox(height: 30),
+            ElevatedButton(
+              onPressed: () {
+                // Confirm dialog
+                showDialog(context: context, builder: (context) => AlertDialog(
+                  title: const Text("Reset Progress?"),
+                  content: const Text("This will delete all gems and upgrades."),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+                    TextButton(onPressed: () async {
+                       await GameData().resetProgress();
+                       Navigator.pop(context); // Close alert
+                       Navigator.pop(context); // Close settings
+                    }, child: const Text("Reset", style: TextStyle(color: Colors.red))),
+                  ],
+                ));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text("RESET GAME DATA"),
+            ),
+            const SizedBox(height: 20),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("CLOSE", style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
@@ -172,6 +316,18 @@ class _WorkshopDialogState extends State<WorkshopDialog> {
                }
              ),
 
+             // Shield Upgrade
+             _buildUpgradeRow(
+               "Orbital Shield (Lvl ${data.levelShield})",
+               data.levelShield == 0 ? "Unlocks Shield" : "Upgrades Shield",
+               data.shieldUpgradeCost,
+               () {
+                 setState(() {
+                   data.buyShieldUpgrade();
+                 });
+               }
+             ),
+
              // Blaster Unlock
              _buildUnlockRow(
                "Blaster Cannon",
@@ -203,8 +359,11 @@ class _WorkshopDialogState extends State<WorkshopDialog> {
       margin: const EdgeInsets.symmetric(vertical: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 10,
+        runSpacing: 10,
         children: [
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -229,8 +388,11 @@ class _WorkshopDialogState extends State<WorkshopDialog> {
       margin: const EdgeInsets.symmetric(vertical: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 10,
+        runSpacing: 10,
         children: [
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
