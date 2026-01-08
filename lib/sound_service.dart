@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'config.dart';
@@ -13,8 +12,6 @@ class SoundService {
   /// Public static getter for singleton instance
   static SoundService get instance => _instance;
 
-  static final math.Random _rng = math.Random();
-
   SoundService._internal() {
     _settingsLoadCompleter = Completer<void>();
   }
@@ -23,7 +20,6 @@ class SoundService {
   // the configured mixing/audio-focus behavior. Using `late final` ensures
   // they're created once during initialization.
   late final AudioPlayer _backgroundMusicPlayer;
-  late final AudioPlayer _sfxPlayer; // Reusable player for non-overlapping sounds if needed, but we typically spawn new ones for polyphony
 
   bool _isMusicEnabled = true;
   bool _isSoundEnabled = true;
@@ -77,14 +73,12 @@ class SoundService {
       // Instantiate players after the global context is set so they use
       // the intended AudioContext (mixing with other apps / no focus).
       _backgroundMusicPlayer = AudioPlayer();
-      _sfxPlayer = AudioPlayer(); // Placeholder, we mostly spawn new players for procedural SFX
 
       print('✅ Audio context configured to mix with other apps and players created');
     } catch (e) {
       print('⚠️ Error configuring audio context: $e');
       // Ensure players are created even if context setup fails
       try { _backgroundMusicPlayer = AudioPlayer(); } catch(_) {}
-      try { _sfxPlayer = AudioPlayer(); } catch(_) {}
     }
   }
 
@@ -374,33 +368,31 @@ class SoundService {
     }
   }
 
-  // --- Procedural SFX ---
+  // --- Asset-based SFX (Replaces Synthesizer) ---
 
   Future<void> playShoot({int variant = 0}) async {
     await _ensureSettingsLoaded();
     if (!_isSoundEnabled) return;
 
     final curvedMultiplier = _applyVolumeCurve(_soundVolumeMultiplier);
-    // Dynamic volume per shot
     final volume = curvedMultiplier.clamp(0.0, 1.0);
 
-    // Create new player for polyphony
     final player = AudioPlayer();
     await player.setPlayerMode(PlayerMode.lowLatency);
     await player.setVolume(volume);
 
-    double baseFreq = 800.0;
-    double duration = 0.12;
-    if (variant == 1) { baseFreq = 1200.0; duration = 0.08; } // High
-    if (variant == 2) { baseFreq = 300.0; duration = 0.2; }   // Low
+    // Map variant to asset
+    String assetName = 'audio/shoot_0.wav';
+    if (variant == 1) assetName = 'audio/shoot_1.wav';
+    if (variant == 2) assetName = 'audio/shoot_2.wav';
 
-    final bytes = _generateWave((t) {
-      double freq = baseFreq - (baseFreq * 0.8 * (t / duration));
-      return (math.sin(2 * math.pi * freq * t) > 0) ? 0.25 : -0.25;
-    }, duration);
-
-    await player.play(BytesSource(bytes));
-    player.onPlayerComplete.listen((_) => player.dispose());
+    try {
+      await player.play(AssetSource(assetName));
+      player.onPlayerComplete.listen((_) => player.dispose());
+    } catch (e) {
+      print("Error playing shoot sfx: $e");
+      player.dispose();
+    }
   }
 
   Future<void> playExplosion({bool isLarge = false}) async {
@@ -408,19 +400,21 @@ class SoundService {
     if (!_isSoundEnabled) return;
 
     final curvedMultiplier = _applyVolumeCurve(_soundVolumeMultiplier);
-    final volume = (curvedMultiplier * 0.5).clamp(0.0, 1.0); // Explosions base volume 0.5
+    final volume = (curvedMultiplier * 0.5).clamp(0.0, 1.0);
 
     final player = AudioPlayer();
     await player.setPlayerMode(PlayerMode.lowLatency);
     await player.setVolume(volume);
 
-    double duration = isLarge ? 0.8 : 0.4;
-    final bytes = _generateWave((t) {
-      return ((_rng.nextDouble() * 2) - 1) * math.pow(1.0 - (t / duration), 2);
-    }, duration);
+    String assetName = isLarge ? 'audio/explosion_large.wav' : 'audio/explosion.wav';
 
-    await player.play(BytesSource(bytes));
-    player.onPlayerComplete.listen((_) => player.dispose());
+    try {
+      await player.play(AssetSource(assetName));
+      player.onPlayerComplete.listen((_) => player.dispose());
+    } catch (e) {
+       print("Error playing explosion sfx: $e");
+       player.dispose();
+    }
   }
 
   Future<void> playPowerUp() async {
@@ -433,49 +427,13 @@ class SoundService {
     await player.setPlayerMode(PlayerMode.lowLatency);
     await player.setVolume(curvedMultiplier);
 
-    final bytes = _generateWave((t) {
-      double freq = 400 + (t * 4000);
-      return math.sin(2 * math.pi * freq * t) * 0.5;
-    }, 0.5);
-    await player.play(BytesSource(bytes));
-    player.onPlayerComplete.listen((_) => player.dispose());
-  }
-
-  // --- WAV Helper ---
-  static Uint8List _generateWave(double Function(double) generator, double duration) {
-    const int rate = 22050;
-    return _createWav((duration * rate).toInt(), rate, (i) => generator(i / rate));
-  }
-
-  static Uint8List _createWav(int numSamples, int sampleRate, double Function(int) getSample) {
-    final int fileSize = 36 + numSamples * 2;
-    final ByteData header = ByteData(44);
-    final List<int> pcmData = [];
-    _writeString(header, 0, 'RIFF');
-    header.setUint32(4, fileSize, Endian.little);
-    _writeString(header, 8, 'WAVE');
-    _writeString(header, 12, 'fmt ');
-    header.setUint32(16, 16, Endian.little);
-    header.setUint16(20, 1, Endian.little);
-    header.setUint16(22, 1, Endian.little);
-    header.setUint32(24, sampleRate, Endian.little);
-    header.setUint32(28, sampleRate * 2, Endian.little);
-    header.setUint16(32, 2, Endian.little);
-    header.setUint16(34, 16, Endian.little);
-    _writeString(header, 36, 'data');
-    header.setUint32(40, numSamples * 2, Endian.little);
-    for (int i = 0; i < numSamples; i++) {
-      int val = (getSample(i) * 32767).toInt();
-      pcmData.add(val & 0xFF);
-      pcmData.add((val >> 8) & 0xFF);
+    try {
+      await player.play(AssetSource('audio/powerup.wav'));
+      player.onPlayerComplete.listen((_) => player.dispose());
+    } catch (e) {
+       print("Error playing powerup sfx: $e");
+       player.dispose();
     }
-    final Uint8List result = Uint8List(44 + pcmData.length);
-    result.setRange(0, 44, header.buffer.asUint8List());
-    result.setRange(44, 44 + pcmData.length, pcmData);
-    return result;
-  }
-  static void _writeString(ByteData data, int offset, String value) {
-    for (int i = 0; i < value.length; i++) data.setUint8(offset + i, value.codeUnitAt(i));
   }
 
   /// Set sound volume multiplier (0.0 to 1.0)
