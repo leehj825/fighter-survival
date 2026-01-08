@@ -28,8 +28,8 @@ class _MainMenuState extends State<MainMenu> {
     super.initState();
     GameData().addListener(_onGameDataChanged);
 
-    // 2. Play Menu Music on Start
-    AudioSynth.playMenuMusic();
+    // 2. Play App Music on Start
+    AudioSynth.playMainTheme();
   }
 
   @override

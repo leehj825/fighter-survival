@@ -155,8 +155,8 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
   @override
   Future<void> onLoad() async {
-    // Switch to Intense Game Music
-    AudioSynth.playGameMusic();
+    // Ensure music is playing (but don't restart if it is)
+    AudioSynth.playMainTheme();
 
     // Create World
     world = World();
@@ -203,7 +203,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
   @override
   void onRemove() {
-    AudioSynth.stopMusic();
+    // AudioSynth.stopMusic(); // Keep music playing
     super.onRemove();
   }
 
