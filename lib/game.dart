@@ -805,11 +805,12 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   void shoot(Vector2 dir) {
     // Basic cooldown for shooting? Let's say 0.3s
     // For now, no strict cooldown was requested, but let's add a small one to prevent spam lag
-    gameRef.world.add(PlayerProjectile(position, dir, damageMult));
 
-    // Variant 1 (High Pitch) if damageMult is high, else Variant 0
-    int variant = damageMult > 1.5 ? 1 : 0;
-    AudioSynth.playShoot(variant: variant);
+    // Use variant based on damage/upgrades
+    int sfxType = damageMult > 1.5 ? 1 : 0;
+    AudioSynth.playShoot(variant: sfxType);
+
+    gameRef.world.add(PlayerProjectile(position, dir, damageMult));
   }
 
   void gainXp(int amount) {
