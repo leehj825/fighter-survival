@@ -831,7 +831,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     health = maxHealth;
 
     gameRef.hud.showStory("LEVEL UP! SYSTEMS RESTORED.");
-    SoundService.instance.playPowerUp();
+    SoundService.instance.playLevelUp();
     gameRef.world.add(VisualEffects.createExplosion(position));
     gameRef.cameraShake(1.0);
   }
@@ -841,7 +841,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     if (_damageCooldown > 0 || isDashing) return;
 
     // When player gets hit
-    SoundService.instance.playShoot(variant: 2); // Use low pitch "thud" for player damage
+    SoundService.instance.playDamage();
 
     health -= amount;
     _damageCooldown = 1.0;

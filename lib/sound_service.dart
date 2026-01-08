@@ -417,7 +417,7 @@ class SoundService {
     }
   }
 
-  Future<void> playPowerUp() async {
+  Future<void> playLevelUp() async {
     await _ensureSettingsLoaded();
     if (!_isSoundEnabled) return;
 
@@ -428,10 +428,29 @@ class SoundService {
     await player.setVolume(curvedMultiplier);
 
     try {
-      await player.play(AssetSource('audio/powerup.wav'));
+      await player.play(AssetSource('audio/levelup.wav'));
       player.onPlayerComplete.listen((_) => player.dispose());
     } catch (e) {
-       print("Error playing powerup sfx: $e");
+       print("Error playing levelup sfx: $e");
+       player.dispose();
+    }
+  }
+
+  Future<void> playDamage() async {
+    await _ensureSettingsLoaded();
+    if (!_isSoundEnabled) return;
+
+    final curvedMultiplier = _applyVolumeCurve(_soundVolumeMultiplier);
+
+    final player = AudioPlayer();
+    await player.setPlayerMode(PlayerMode.lowLatency);
+    await player.setVolume(curvedMultiplier);
+
+    try {
+      await player.play(AssetSource('audio/damage.wav'));
+      player.onPlayerComplete.listen((_) => player.dispose());
+    } catch (e) {
+       print("Error playing damage sfx: $e");
        player.dispose();
     }
   }
