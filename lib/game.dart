@@ -625,6 +625,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   void onGameOver() {
     gameOver = true;
     GameData().addGems(runGems);
+    GameData().clearRunState(); // Clear save on death
     overlays.add('GameOver');
   }
 

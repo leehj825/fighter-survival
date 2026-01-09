@@ -52,8 +52,7 @@ class SoundService {
     await _initSfxPool();
 
     // 3. THEN: Load settings and complete the completer
-    // We don't await here to allow app startup to proceed; settings will apply when loaded
-    _loadVolumeSettings();
+    await _loadVolumeSettings();
   }
 
   Future<void> _initSfxPool() async {

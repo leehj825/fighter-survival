@@ -6,14 +6,10 @@ class Hud extends PositionComponent with HasGameRef<RpgGame> {
   final TextComponent scoreText = TextComponent(
     text: 'Kills: 0',
     textRenderer: TextPaint(style: const TextStyle(color: Colors.white, fontSize: 20)),
-    position: Vector2(20, 40),
+    position: Vector2(20, 20), // Moved up
   );
 
-  final TextComponent healthText = TextComponent(
-    text: 'HP: 100',
-    textRenderer: TextPaint(style: const TextStyle(color: Colors.green, fontSize: 20)),
-    position: Vector2(20, 70),
-  );
+  // Removed healthText, replaced with bar in render
 
   final TextComponent storyText = TextComponent(
     text: '',
@@ -30,13 +26,14 @@ class Hud extends PositionComponent with HasGameRef<RpgGame> {
 
   final Paint _barBgPaint = Paint()..color = Colors.grey.withOpacity(0.5);
   final Paint _barFillPaint = Paint()..color = Colors.cyanAccent;
+  final Paint _hpBarFillPaint = Paint()..color = Colors.green;
+  final Paint _hpBarBgPaint = Paint()..color = Colors.red.withOpacity(0.3);
 
-  Hud() : super(priority: 100);
+  Hud() : super(priority: 1000); // Higher priority to ensure on top
 
   @override
   Future<void> onLoad() async {
     add(scoreText);
-    add(healthText);
     add(storyText);
   }
 
@@ -51,18 +48,24 @@ class Hud extends PositionComponent with HasGameRef<RpgGame> {
     super.render(canvas);
     final double width = gameRef.size.x - 40;
     const double height = 10;
-    // Prevent division by zero if game just started
+
+    // XP Bar (Top)
     final int nextLevel = gameRef.player.xpToNextLevel > 0 ? gameRef.player.xpToNextLevel : 1;
-    final double pct = (gameRef.player.xp / nextLevel).clamp(0.0, 1.0);
+    final double xpPct = (gameRef.player.xp / nextLevel).clamp(0.0, 1.0);
 
     canvas.drawRect(Rect.fromLTWH(20, 10, width, height), _barBgPaint);
-    canvas.drawRect(Rect.fromLTWH(20, 10, width * pct, height), _barFillPaint);
+    canvas.drawRect(Rect.fromLTWH(20, 10, width * xpPct, height), _barFillPaint);
+
+    // HP Bar (Under Level Text)
+    // Level text is at 20, 20 (height ~20-30). So bar at y=50
+    final double hpPct = (gameRef.player.health / gameRef.player.maxHealth).clamp(0.0, 1.0);
+    canvas.drawRect(Rect.fromLTWH(20, 50, 200, 15), _hpBarBgPaint);
+    canvas.drawRect(Rect.fromLTWH(20, 50, 200 * hpPct, 15), _hpBarFillPaint);
   }
 
   @override
   void update(double dt) {
     scoreText.text = 'Lv.${gameRef.player.level} | Wave ${gameRef.wave}';
-    healthText.text = 'HP: ${gameRef.player.health}';
     if (gameRef.gameOver) {
       storyText.text = "SIGNAL LOST. TAP TO RESTART.";
     }
