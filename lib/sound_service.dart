@@ -285,44 +285,6 @@ class SoundService {
     const fadeInDuration = Duration(milliseconds: 500);
     _fadeIn(fadeInDuration, volume);
     _wasPlayingBeforePause = true;
-
-    // Fade Monitoring
-    _startFadeMonitoring(assetPath, volume);
-  }
-
-  void _startFadeMonitoring(String assetPath, double targetVolume) {
-    _fadeTimer?.cancel();
-
-    Future.delayed(const Duration(milliseconds: 500), () async {
-      try {
-        final duration = await _backgroundMusicPlayer.getDuration();
-        if (duration != null) _trackDuration = duration;
-      } catch (_) {}
-    });
-
-    _fadeTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) async {
-      if (_currentMusicPath != assetPath) {
-        timer.cancel();
-        _fadeTimer = null;
-        return;
-      }
-
-      try {
-        final position = await _backgroundMusicPlayer.getCurrentPosition();
-        if (position == null || _trackDuration == null) return;
-
-        final timeRemaining = _trackDuration! - position;
-        const fadeOutDuration = Duration(seconds: 4);
-
-        if (timeRemaining <= fadeOutDuration && !_isFading) {
-          _isFading = true;
-          _fadeOut(fadeOutDuration, targetVolume);
-        } else if (position.inMilliseconds < 500 && _isFading) {
-          _isFading = false;
-          _fadeIn(const Duration(milliseconds: 500), _targetVolume ?? targetVolume);
-        }
-      } catch (_) {}
-    });
   }
 
   Future<void> _fadeOut(Duration duration, double targetVolume) async {
@@ -397,7 +359,6 @@ class SoundService {
     if (!_isMusicEnabled || !_wasPlayingBeforePause || _currentMusicPath == null) return;
     try {
       await _backgroundMusicPlayer.resume();
-      _startFadeMonitoring(_currentMusicPath!, _targetVolume ?? _musicVolume);
     } catch (_) {
        // If resume fails (e.g. stopped/released), restart
        await playBackgroundMusic(_currentMusicPath!);
