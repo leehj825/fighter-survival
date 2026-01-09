@@ -21,6 +21,11 @@ class SoundService {
   // they're created once during initialization.
   late final AudioPlayer _backgroundMusicPlayer;
 
+  // SFX Pool
+  final List<AudioPlayer> _sfxPool = [];
+  static const int _maxSfxPlayers = 8;
+  int _poolIndex = 0;
+
   bool _isMusicEnabled = true;
   bool _isSoundEnabled = true;
   bool _isMusicOperationInProgress = false; // Prevent concurrent music operations
@@ -43,9 +48,34 @@ class SoundService {
     // 1. FIRST: Configure Audio Context and WAIT for it to finish
     await _initAudioContext();
 
-    // 2. THEN: Load settings and complete the completer
+    // 2. Initialize SFX Pool
+    await _initSfxPool();
+
+    // 3. THEN: Load settings and complete the completer
     // We don't await here to allow app startup to proceed; settings will apply when loaded
     _loadVolumeSettings();
+  }
+
+  Future<void> _initSfxPool() async {
+    for (int i = 0; i < 4; i++) {
+        final player = AudioPlayer();
+        await player.setPlayerMode(PlayerMode.lowLatency);
+        _sfxPool.add(player);
+    }
+  }
+
+  Future<AudioPlayer> _getSfxPlayer() async {
+    // Round-robin selection for simple overlap
+    if (_sfxPool.length < _maxSfxPlayers) {
+       final player = AudioPlayer();
+       await player.setPlayerMode(PlayerMode.lowLatency);
+       _sfxPool.add(player);
+       return player;
+    }
+
+    _poolIndex = (_poolIndex + 1) % _sfxPool.length;
+    final player = _sfxPool[_poolIndex];
+    return player;
   }
 
   /// Initialize audio context to allow mixing with other sounds
@@ -368,91 +398,46 @@ class SoundService {
     }
   }
 
-  // --- Asset-based SFX (Replaces Synthesizer) ---
+  // --- Asset-based SFX (Pooled) ---
 
-  Future<void> playShoot({int variant = 0}) async {
+  Future<void> _playSound(String assetName, {double volumeMult = 1.0}) async {
     await _ensureSettingsLoaded();
     if (!_isSoundEnabled) return;
 
     final curvedMultiplier = _applyVolumeCurve(_soundVolumeMultiplier);
-    final volume = curvedMultiplier.clamp(0.0, 1.0);
+    final volume = (curvedMultiplier * volumeMult).clamp(0.0, 1.0);
 
-    final player = AudioPlayer();
-    await player.setPlayerMode(PlayerMode.lowLatency);
-    await player.setVolume(volume);
+    try {
+      final player = await _getSfxPlayer();
+      // Reset player if needed (stop previous sound if overlap)
+      // await player.stop(); // Optional, but good for reuse to clear buffer
+      await player.setVolume(volume);
+      await player.play(AssetSource(assetName));
+    } catch (e) {
+      print("Error playing SFX $assetName: $e");
+    }
+  }
 
+  Future<void> playShoot({int variant = 0}) async {
     // Map variant to asset
     String assetName = 'audio/shoot_0.wav';
     if (variant == 1) assetName = 'audio/shoot_1.wav';
     if (variant == 2) assetName = 'audio/shoot_2.wav';
 
-    try {
-      await player.play(AssetSource(assetName));
-      player.onPlayerComplete.listen((_) => player.dispose());
-    } catch (e) {
-      print("Error playing shoot sfx: $e");
-      player.dispose();
-    }
+    await _playSound(assetName);
   }
 
   Future<void> playExplosion({bool isLarge = false}) async {
-    await _ensureSettingsLoaded();
-    if (!_isSoundEnabled) return;
-
-    final curvedMultiplier = _applyVolumeCurve(_soundVolumeMultiplier);
-    final volume = (curvedMultiplier * 0.5).clamp(0.0, 1.0);
-
-    final player = AudioPlayer();
-    await player.setPlayerMode(PlayerMode.lowLatency);
-    await player.setVolume(volume);
-
     String assetName = isLarge ? 'audio/explosion_large.wav' : 'audio/explosion.wav';
-
-    try {
-      await player.play(AssetSource(assetName));
-      player.onPlayerComplete.listen((_) => player.dispose());
-    } catch (e) {
-       print("Error playing explosion sfx: $e");
-       player.dispose();
-    }
+    await _playSound(assetName, volumeMult: 0.5);
   }
 
   Future<void> playLevelUp() async {
-    await _ensureSettingsLoaded();
-    if (!_isSoundEnabled) return;
-
-    final curvedMultiplier = _applyVolumeCurve(_soundVolumeMultiplier);
-
-    final player = AudioPlayer();
-    await player.setPlayerMode(PlayerMode.lowLatency);
-    await player.setVolume(curvedMultiplier);
-
-    try {
-      await player.play(AssetSource('audio/levelup.wav'));
-      player.onPlayerComplete.listen((_) => player.dispose());
-    } catch (e) {
-       print("Error playing levelup sfx: $e");
-       player.dispose();
-    }
+    await _playSound('audio/levelup.wav');
   }
 
   Future<void> playDamage() async {
-    await _ensureSettingsLoaded();
-    if (!_isSoundEnabled) return;
-
-    final curvedMultiplier = _applyVolumeCurve(_soundVolumeMultiplier);
-
-    final player = AudioPlayer();
-    await player.setPlayerMode(PlayerMode.lowLatency);
-    await player.setVolume(curvedMultiplier);
-
-    try {
-      await player.play(AssetSource('audio/damage.wav'));
-      player.onPlayerComplete.listen((_) => player.dispose());
-    } catch (e) {
-       print("Error playing damage sfx: $e");
-       player.dispose();
-    }
+    await _playSound('audio/damage.wav');
   }
 
   /// Set sound volume multiplier (0.0 to 1.0)
