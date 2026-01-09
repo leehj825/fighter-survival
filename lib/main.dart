@@ -252,6 +252,8 @@ class SettingsDialog extends StatefulWidget {
 }
 
 class _SettingsDialogState extends State<SettingsDialog> {
+  int _lastSoundTime = 0;
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -285,6 +287,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 setState(() {
                   SoundService.instance.setSoundVolumeMultiplier(val);
                 });
+
+                // Play feedback sound (throttled)
+                final now = DateTime.now().millisecondsSinceEpoch;
+                if (now - _lastSoundTime > 150) {
+                  SoundService.instance.playShoot(variant: 1);
+                  _lastSoundTime = now;
+                }
               },
             ),
 
