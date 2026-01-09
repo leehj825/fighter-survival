@@ -11,7 +11,10 @@ void main() async {
   // 1. Initialize Audio Context Globally
   await SoundService.instance.init();
 
-  runApp(const MaterialApp(home: MainMenu()));
+  runApp(const MaterialApp(
+    title: 'Fight Survival',
+    home: MainMenu(),
+  ));
 }
 
 class MainMenu extends StatefulWidget {
@@ -85,7 +88,7 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const Text(
-              "FIGHTER SURVIVAL",
+              "FIGHT SURVIVAL",
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.cyanAccent),
             ),
