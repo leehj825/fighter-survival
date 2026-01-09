@@ -65,7 +65,14 @@ class SoundService {
   }
 
   Future<AudioPlayer> _getSfxPlayer() async {
-    // Round-robin selection for simple overlap
+    // 1. Try to find a free player (not playing)
+    for (final player in _sfxPool) {
+      if (player.state != PlayerState.playing) {
+        return player;
+      }
+    }
+
+    // 2. If all busy, expand pool if below limit
     if (_sfxPool.length < _maxSfxPlayers) {
        final player = AudioPlayer();
        await player.setPlayerMode(PlayerMode.lowLatency);
@@ -73,9 +80,9 @@ class SoundService {
        return player;
     }
 
+    // 3. Fallback: Round-robin steal
     _poolIndex = (_poolIndex + 1) % _sfxPool.length;
-    final player = _sfxPool[_poolIndex];
-    return player;
+    return _sfxPool[_poolIndex];
   }
 
   /// Initialize audio context to allow mixing with other sounds
@@ -409,8 +416,8 @@ class SoundService {
 
     try {
       final player = await _getSfxPlayer();
-      // Reset player if needed (stop previous sound if overlap)
-      // await player.stop(); // Optional, but good for reuse to clear buffer
+      // Force stop before reuse to prevent "dead player" state
+      await player.stop();
       await player.setVolume(volume);
       await player.play(AssetSource(assetName));
     } catch (e) {
