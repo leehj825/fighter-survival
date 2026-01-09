@@ -1,4 +1,4 @@
-# Flame Action RPG Prototype
+# Fight Survival
 
 A single-finger Action RPG prototype built with [Flutter](https://flutter.dev) and the [Flame Engine](https://flame-engine.org/).
 

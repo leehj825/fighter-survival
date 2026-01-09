@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flame/game.dart';
-import 'package:flutter_rpg_prototype/game.dart'; // Changed import to game.dart
+import 'package:fight_survival/game.dart'; // Changed import to game.dart
 
 void main() {
   testWidgets('RpgGame starts and runs', (WidgetTester tester) async {

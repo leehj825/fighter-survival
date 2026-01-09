@@ -2,16 +2,19 @@ import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'game.dart';
 import 'managers.dart';
-import 'audio_synth.dart';
+import 'sound_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await GameData().init();
 
   // 1. Initialize Audio Context Globally
-  await AudioSynth.initSystem();
+  await SoundService.instance.init();
 
-  runApp(const MaterialApp(home: MainMenu()));
+  runApp(const MaterialApp(
+    title: 'Fight Survival',
+    home: MainMenu(),
+  ));
 }
 
 class MainMenu extends StatefulWidget {
@@ -21,31 +24,51 @@ class MainMenu extends StatefulWidget {
   State<MainMenu> createState() => _MainMenuState();
 }
 
-class _MainMenuState extends State<MainMenu> {
+class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
   // We'll listen to GameData changes to update UI
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     GameData().addListener(_onGameDataChanged);
 
-    // 2. Play Menu Music on Start
-    AudioSynth.playMenuMusic();
+    // 2. Play App Music on Start
+    SoundService.instance.playBackgroundMusic('audio/main2.mp3');
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     GameData().removeListener(_onGameDataChanged);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      SoundService.instance.pauseBackgroundMusic();
+    } else if (state == AppLifecycleState.resumed) {
+      SoundService.instance.resumeBackgroundMusic();
+    }
   }
 
   void _onGameDataChanged() {
     setState(() {});
   }
 
-  void _startGame() {
+  void _startNewGame() {
+    GameData().clearRunState();
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => const GameScreen(),
+        builder: (context) => const GameScreen(resume: false),
+      ),
+    );
+  }
+
+  void _resumeGame() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const GameScreen(resume: true),
       ),
     );
   }
@@ -74,7 +97,7 @@ class _MainMenuState extends State<MainMenu> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const Text(
-              "FIGHTER SURVIVAL",
+              "FIGHT SURVIVAL",
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.cyanAccent),
             ),
@@ -84,14 +107,33 @@ class _MainMenuState extends State<MainMenu> {
               style: const TextStyle(fontSize: 20, color: Colors.amber),
             ),
             const SizedBox(height: 50),
-            ElevatedButton(
-              onPressed: _startGame,
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
-                backgroundColor: Colors.green,
+            if (GameData().hasSavedRun) ...[
+              ElevatedButton(
+                onPressed: _resumeGame,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
+                  backgroundColor: Colors.orange,
+                ),
+                child: const Text("RESUME", style: TextStyle(fontSize: 24)),
               ),
-              child: const Text("PLAY", style: TextStyle(fontSize: 24)),
-            ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _startNewGame,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                  backgroundColor: Colors.green,
+                ),
+                child: const Text("NEW GAME", style: TextStyle(fontSize: 20)),
+              ),
+            ] else
+              ElevatedButton(
+                onPressed: _startNewGame,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
+                  backgroundColor: Colors.green,
+                ),
+                child: const Text("PLAY", style: TextStyle(fontSize: 24)),
+              ),
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed: _openWorkshop,
@@ -118,7 +160,8 @@ class _MainMenuState extends State<MainMenu> {
 }
 
 class GameScreen extends StatefulWidget {
-  const GameScreen({super.key});
+  final bool resume;
+  const GameScreen({super.key, this.resume = false});
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -130,7 +173,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    _game = RpgGame();
+    _game = RpgGame(resumeGame: widget.resume);
     WidgetsBinding.instance.addObserver(this);
   }
 
@@ -230,8 +273,15 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   }
 }
 
-class SettingsDialog extends StatelessWidget {
+class SettingsDialog extends StatefulWidget {
   const SettingsDialog({super.key});
+
+  @override
+  State<SettingsDialog> createState() => _SettingsDialogState();
+}
+
+class _SettingsDialogState extends State<SettingsDialog> {
+  int _lastSoundTime = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -243,26 +293,39 @@ class SettingsDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text("SETTINGS", style: TextStyle(color: Colors.white, fontSize: 24)),
-            const SizedBox(height: 30),
-            ElevatedButton(
-              onPressed: () {
-                // Confirm dialog
-                showDialog(context: context, builder: (context) => AlertDialog(
-                  title: const Text("Reset Progress?"),
-                  content: const Text("This will delete all gems and upgrades."),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-                    TextButton(onPressed: () async {
-                       await GameData().resetProgress();
-                       Navigator.pop(context); // Close alert
-                       Navigator.pop(context); // Close settings
-                    }, child: const Text("Reset", style: TextStyle(color: Colors.red))),
-                  ],
-                ));
+            const SizedBox(height: 20),
+
+            // Music Volume
+            _buildVolumeSlider(
+              label: "Music Volume",
+              value: SoundService.instance.musicVolumeMultiplier,
+              onChanged: (val) {
+                setState(() {
+                  SoundService.instance.setMusicVolumeMultiplier(val);
+                });
               },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              child: const Text("RESET GAME DATA"),
             ),
+
+            const SizedBox(height: 10),
+
+            // Sound Volume
+            _buildVolumeSlider(
+              label: "Sound Volume",
+              value: SoundService.instance.soundVolumeMultiplier,
+              onChanged: (val) {
+                setState(() {
+                  SoundService.instance.setSoundVolumeMultiplier(val);
+                });
+
+                // Play feedback sound (throttled)
+                final now = DateTime.now().millisecondsSinceEpoch;
+                if (now - _lastSoundTime > 150) {
+                  SoundService.instance.playShoot(variant: 1);
+                  _lastSoundTime = now;
+                }
+              },
+            ),
+
             const SizedBox(height: 20),
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -271,6 +334,26 @@ class SettingsDialog extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildVolumeSlider({required String label, required double value, required ValueChanged<double> onChanged}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "$label: ${(value * 100).toInt()}%",
+          style: const TextStyle(color: Colors.white70)
+        ),
+        Slider(
+          value: value,
+          onChanged: onChanged,
+          min: 0.0,
+          max: 1.0,
+          activeColor: Colors.cyanAccent,
+          inactiveColor: Colors.grey.shade800,
+        ),
+      ],
     );
   }
 }

@@ -12,7 +12,7 @@ import 'grid_background.dart';
 import 'hud.dart';
 import 'managers.dart';
 import 'visual_effects.dart';
-import 'audio_synth.dart';
+import 'sound_service.dart';
 
 /// Extension for safe vector normalization
 extension SafeVector2 on Vector2 {
@@ -110,10 +110,13 @@ class ActionButton extends PositionComponent {
 
 /// The main Game class.
 class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
+  final bool resumeGame;
   late Player player;
   late Hud hud;
   late VirtualJoystick joystick;
   late ActionButton slashButton;
+
+  RpgGame({this.resumeGame = false});
 
   // Game State
   int killCount = 0;
@@ -155,14 +158,29 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
   @override
   Future<void> onLoad() async {
-    // Switch to Intense Game Music
-    AudioSynth.playGameMusic();
+    // Ensure music is playing (but don't restart if it is)
+    SoundService.instance.playBackgroundMusic('audio/main2.mp3');
 
     // Create World
     world = World();
 
     // Initialize Player with Stats from GameData
     player = Player()..anchor = Anchor.center;
+
+    // Load Resume State
+    if (resumeGame && GameData().hasSavedRun) {
+      final data = GameData();
+      wave = data.savedWave;
+      player.level = data.savedLevel;
+      player.xp = data.savedXp;
+      player.damageMult = data.savedDamageMult;
+      player.xpToNextLevel = (10 * pow(1.5, player.level - 1)).toInt(); // Recalculate xpToNext
+      // We set health in onLoad of Player usually, let's override it after add or pass it.
+      // Since Player.onLoad runs when added, we should set these stats *after* adding?
+      // Or modify Player to accept them.
+      // Player is a PositionComponent.
+    }
+
     world.add(player);
 
     // Add Orbital Shield (If Unlocked/Leveled)
@@ -203,7 +221,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
   @override
   void onRemove() {
-    AudioSynth.stopMusic();
+    // SoundService.instance.stopBackgroundMusic(); // Keep music playing
     super.onRemove();
   }
 
@@ -607,12 +625,18 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   void onGameOver() {
     gameOver = true;
     GameData().addGems(runGems);
+    GameData().clearRunState(); // Clear save on death
     overlays.add('GameOver');
   }
 
   void exitRun() {
     GameData().addGems(runGems);
-    // No need to reset variables here as GameWidget disposal or resetGame handles it next time
+    // Save state for Resume
+    if (!gameOver) {
+      GameData().saveRunState(wave, player.level, player.xp, player.damageMult, player.health);
+    } else {
+      GameData().clearRunState();
+    }
   }
 }
 
@@ -690,7 +714,15 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     // Initialize Stats from GameData
     final data = GameData();
     maxHealth = 100 + (data.levelHp * 20);
-    health = maxHealth;
+
+    // Check if we need to load saved health (if resuming)
+    // Accessing parent game
+    final rpgGame = gameRef;
+    if (rpgGame.resumeGame && data.hasSavedRun) {
+       health = data.savedHealth;
+    } else {
+       health = maxHealth;
+    }
 
     // Base dash cooldown 0.8s, reduced by 10% per level
     dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
@@ -808,7 +840,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     // Use variant based on damage/upgrades
     int sfxType = damageMult > 1.5 ? 1 : 0;
-    AudioSynth.playShoot(variant: sfxType);
+    SoundService.instance.playShoot(variant: sfxType);
 
     gameRef.world.add(PlayerProjectile(position, dir, damageMult));
   }
@@ -831,7 +863,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     health = maxHealth;
 
     gameRef.hud.showStory("LEVEL UP! SYSTEMS RESTORED.");
-    AudioSynth.playPowerUp();
+    SoundService.instance.playLevelUp();
     gameRef.world.add(VisualEffects.createExplosion(position));
     gameRef.cameraShake(1.0);
   }
@@ -841,7 +873,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     if (_damageCooldown > 0 || isDashing) return;
 
     // When player gets hit
-    AudioSynth.playShoot(variant: 2); // Use low pitch "thud" for player damage
+    SoundService.instance.playDamage();
 
     health -= amount;
     _damageCooldown = 1.0;
@@ -1033,7 +1065,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       gameRef.world.add(XpGem(isElite ? 50 : 10)..position = position);
 
       // Play louder explosion for Elite enemies or Bosses
-      AudioSynth.playExplosion(isLarge: isElite);
+      SoundService.instance.playExplosion(isLarge: isElite);
       gameRef.world.add(VisualEffects.createExplosion(position));
       gameRef.cameraShake(1.0);
     }

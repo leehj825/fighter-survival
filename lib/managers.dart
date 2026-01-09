@@ -39,6 +39,34 @@ class GameData extends ChangeNotifier {
     notifyListeners();
   }
 
+  // --- Session Persistence ---
+
+  bool get hasSavedRun => _prefs.containsKey('savedWave');
+
+  Future<void> saveRunState(int wave, int level, int xp, double damageMult, int health) async {
+    await _prefs.setInt('savedWave', wave);
+    await _prefs.setInt('savedLevel', level);
+    await _prefs.setInt('savedXp', xp);
+    await _prefs.setDouble('savedDamageMult', damageMult);
+    await _prefs.setInt('savedHealth', health);
+    notifyListeners();
+  }
+
+  Future<void> clearRunState() async {
+    await _prefs.remove('savedWave');
+    await _prefs.remove('savedLevel');
+    await _prefs.remove('savedXp');
+    await _prefs.remove('savedDamageMult');
+    await _prefs.remove('savedHealth');
+    notifyListeners();
+  }
+
+  int get savedWave => _prefs.getInt('savedWave') ?? 1;
+  int get savedLevel => _prefs.getInt('savedLevel') ?? 1;
+  int get savedXp => _prefs.getInt('savedXp') ?? 0;
+  double get savedDamageMult => _prefs.getDouble('savedDamageMult') ?? 1.0;
+  int get savedHealth => _prefs.getInt('savedHealth') ?? 100;
+
   // --- Upgrade Costs & Logic ---
 
   int get hpUpgradeCost => 100 * (levelHp + 1);
