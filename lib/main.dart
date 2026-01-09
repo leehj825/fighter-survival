@@ -56,10 +56,19 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
     setState(() {});
   }
 
-  void _startGame() {
+  void _startNewGame() {
+    GameData().clearRunState();
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => const GameScreen(),
+        builder: (context) => const GameScreen(resume: false),
+      ),
+    );
+  }
+
+  void _resumeGame() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const GameScreen(resume: true),
       ),
     );
   }
@@ -98,14 +107,33 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
               style: const TextStyle(fontSize: 20, color: Colors.amber),
             ),
             const SizedBox(height: 50),
-            ElevatedButton(
-              onPressed: _startGame,
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
-                backgroundColor: Colors.green,
+            if (GameData().hasSavedRun) ...[
+              ElevatedButton(
+                onPressed: _resumeGame,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
+                  backgroundColor: Colors.orange,
+                ),
+                child: const Text("RESUME", style: TextStyle(fontSize: 24)),
               ),
-              child: const Text("PLAY", style: TextStyle(fontSize: 24)),
-            ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _startNewGame,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                  backgroundColor: Colors.green,
+                ),
+                child: const Text("NEW GAME", style: TextStyle(fontSize: 20)),
+              ),
+            ] else
+              ElevatedButton(
+                onPressed: _startNewGame,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
+                  backgroundColor: Colors.green,
+                ),
+                child: const Text("PLAY", style: TextStyle(fontSize: 24)),
+              ),
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed: _openWorkshop,
@@ -132,7 +160,8 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
 }
 
 class GameScreen extends StatefulWidget {
-  const GameScreen({super.key});
+  final bool resume;
+  const GameScreen({super.key, this.resume = false});
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -144,7 +173,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    _game = RpgGame();
+    _game = RpgGame(resumeGame: widget.resume);
     WidgetsBinding.instance.addObserver(this);
   }
 
@@ -297,26 +326,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
               },
             ),
 
-            const SizedBox(height: 30),
-            ElevatedButton(
-              onPressed: () {
-                // Confirm dialog
-                showDialog(context: context, builder: (context) => AlertDialog(
-                  title: const Text("Reset Progress?"),
-                  content: const Text("This will delete all gems and upgrades."),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-                    TextButton(onPressed: () async {
-                       await GameData().resetProgress();
-                       Navigator.pop(context); // Close alert
-                       Navigator.pop(context); // Close settings
-                    }, child: const Text("Reset", style: TextStyle(color: Colors.red))),
-                  ],
-                ));
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              child: const Text("RESET GAME DATA"),
-            ),
             const SizedBox(height: 20),
             TextButton(
               onPressed: () => Navigator.pop(context),
