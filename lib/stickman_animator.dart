@@ -42,7 +42,8 @@ class StickmanAnimator {
     if (speed > 10) {
       // FIX: Adjusted offset to -pi/2 (-90 degrees) to fix Left/Right swap
       // Also ensure we are rotating correctly relative to the "Front" facing model
-      double targetAngle = atan2(velocity.y, velocity.x) - pi / 2;
+      // Invert Y velocity to fix Up/Down swap
+      double targetAngle = atan2(-velocity.y, velocity.x) - pi / 2;
 
       double diff = targetAngle - _facingAngle;
       while (diff < -pi) diff += 2 * pi;
@@ -139,15 +140,13 @@ class StickmanAnimator {
     else if (isAttacking && attackType == AttackType.kick) {
        // Swing Right Leg in a circle
        double kickProgress = (_attackTimer / 0.3); // 0.0 to 1.0
-       double kickAngle = sin(kickProgress * pi) * 2.5; // Arc
 
        // Override Right Leg
        // Rotate around Y axis (Hip) locally
-       Vector3 legDir = Vector3(12, 0, 0); // Side kick
-       // Rotate this vector based on progress
-       double ka = kickProgress * pi * 2; // Full spin illusion? Or just side sweep
-       rKnee = rHip + Vector3(cos(ka)*10, 5, sin(ka)*10); // Circular motion
-       rFoot = rKnee + Vector3(cos(ka)*12, 5, sin(ka)*12);
+       // Bigger turn spin: Radius 25
+       double ka = kickProgress * pi * 2;
+       rKnee = rHip + Vector3(cos(ka)*20, 5, sin(ka)*20); // Circular motion
+       rFoot = rKnee + Vector3(cos(ka)*20, 5, sin(ka)*20); // Leg extended straight out
     }
 
     // Calculate Arm Joints

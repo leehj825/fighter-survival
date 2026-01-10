@@ -715,8 +715,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
 
     // Initialize Animator instead of SVGs
-    // Set Animator to use Kick by default for attacks
-    _animator = StickmanAnimator(color: Colors.cyanAccent, scale: 1.2, attackType: AttackType.kick);
+    // Set Animator to use Kick by default for attacks and remove stick weapon
+    _animator = StickmanAnimator(color: Colors.cyanAccent, scale: 1.2, attackType: AttackType.kick, weaponType: WeaponType.none);
   }
 
   @override
@@ -1374,6 +1374,8 @@ class HurricaneKickEffect extends PositionComponent {
     _paint.color = Colors.cyanAccent.withOpacity(opacity);
 
     canvas.save();
+    // Center logic: Move to center of component (50, 50) since size is 100
+    canvas.translate(size.x / 2, size.y / 2);
     canvas.rotate(progress * pi * 4); // Fast spin
 
     // Draw spiral lines
