@@ -1,0 +1,11 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="50" cy="20" r="10" stroke="purple" stroke-width="4" fill="none"/>
+  <line x1="50" y1="30" x2="50" y2="60" stroke="purple" stroke-width="4"/>
+  <!-- Run 2 Legs -->
+  <line x1="50" y1="60" x2="30" y2="80" stroke="purple" stroke-width="4"/>
+  <line x1="50" y1="60" x2="70" y2="70" stroke="purple" stroke-width="4"/>
+  <!-- Arms Bow -->
+  <line x1="50" y1="40" x2="70" y2="40" stroke="purple" stroke-width="4"/>
+  <line x1="50" y1="45" x2="65" y2="50" stroke="purple" stroke-width="4"/>
+  <path d="M 65 20 Q 85 40 65 60" stroke="white" stroke-width="2" fill="none"/>
+</svg>

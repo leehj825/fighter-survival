@@ -705,9 +705,12 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   bool isSlashing = false;
 
   late Svg _svgIdle;
-  late Svg _svgRun;
   late Svg _svgPunch;
   late Svg _svgKick;
+
+  final List<Svg> _svgRunFrames = [];
+  double _animTimer = 0.0;
+  int _animFrameIndex = 0;
 
   Player() : super(size: Vector2.all(60), anchor: Anchor.center); // Increased size for better SVG visibility
 
@@ -732,9 +735,10 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     // Load SVGs
     _svgIdle = await Svg.load('images/player_idle.svg');
-    _svgRun = await Svg.load('images/player_run.svg');
     _svgPunch = await Svg.load('images/player_punch.svg');
     _svgKick = await Svg.load('images/player_kick.svg');
+    _svgRunFrames.add(await Svg.load('images/player_run_1.svg'));
+    _svgRunFrames.add(await Svg.load('images/player_run_2.svg'));
   }
 
   @override
@@ -777,6 +781,16 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
       } else {
         scale = Vector2.all(1);
       }
+
+      // Animate
+      _animTimer += dt;
+      if (_animTimer > 0.15) {
+        _animTimer = 0;
+        _animFrameIndex = (_animFrameIndex + 1) % _svgRunFrames.length;
+      }
+    } else {
+      _animFrameIndex = 0;
+      _animTimer = 0;
     }
   }
 
@@ -792,29 +806,16 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     if (isDashing) {
       currentSvg = _svgPunch;
-      // Rotate if dashing?
-      // SVGs are drawn normally, orientation handled by update/flip
-      if (_dashDirection.x < 0) {
-         // Flipped by scale in update? No, dash sets angle.
-         // But we should rely on flip for stickman, not rotation, usually.
-         // Stickman dash: Punch forward.
-         // If we rotate the whole component, the stickman rotates.
-         // Let's reset rotation and use scale for left/right facing.
-         // Actually `dash` method sets `angle`. We might want to disable that for stickman look
-         // or ensure the SVG is oriented top-down if we use angle.
-         // But stickman SVGs are side-view/front-view.
-      }
     } else if (isSlashing) {
       currentSvg = _svgKick;
     } else if (moveDirection != null && moveDirection != Vector2.zero()) {
-      currentSvg = _svgRun;
+      if (_svgRunFrames.isNotEmpty) {
+        currentSvg = _svgRunFrames[_animFrameIndex];
+      }
     }
 
     // Render SVG centered
     currentSvg.render(canvas, Vector2.all(size.x));
-
-    // Debug bounds if needed
-    // canvas.drawRect(size.toRect(), Paint()..style=PaintingStyle.stroke..color=Colors.white);
   }
 
   void dash(Vector2 direction) {
@@ -985,6 +986,10 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   int _maxHealth = 2;
 
   Svg? _svg;
+  final List<Svg> _svgRunFrames = [];
+  double _animTimer = 0.0;
+  int _animFrameIndex = 0;
+  bool _isMoving = false;
 
   Enemy({this.isElite = false, this.modifier = EnemyModifier.none}) : super(size: Vector2.all(isElite ? 100 : 50), anchor: Anchor.center) {
      if(isElite) health = health * 5;
@@ -996,8 +1001,12 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     super.onLoad();
     if (isElite) {
       _svg = await Svg.load('images/enemy_boss.svg');
+      _svgRunFrames.add(await Svg.load('images/enemy_boss_run_1.svg'));
+      _svgRunFrames.add(await Svg.load('images/enemy_boss_run_2.svg'));
     } else {
       _svg = await Svg.load('images/enemy_sword.svg');
+      _svgRunFrames.add(await Svg.load('images/enemy_sword_run_1.svg'));
+      _svgRunFrames.add(await Svg.load('images/enemy_sword_run_2.svg'));
     }
   }
 
@@ -1022,8 +1031,10 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     if (_knockbackVelocity.length > 5) {
       position.add(_knockbackVelocity * dt);
       _knockbackVelocity.scale(0.9);
+      _isMoving = true;
     } else {
       _knockbackVelocity.setZero();
+      _isMoving = false;
 
       _roamTimer -= dt;
       if (_roamTimer <= 0 || _roamTarget == null) {
@@ -1038,8 +1049,27 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
           double currentSpeed = _speed;
           if (modifier == EnemyModifier.swift) currentSpeed *= 1.5;
           position.add(dir.safeNormalized() * currentSpeed * dt);
+          _isMoving = true;
+
+          // Face direction
+          if (dir.x < 0) {
+            scale = Vector2(-1, 1);
+          } else {
+            scale = Vector2.all(1);
+          }
         }
       }
+    }
+
+    // Animate
+    if (_isMoving && _svgRunFrames.isNotEmpty) {
+       _animTimer += dt;
+       if (_animTimer > 0.2) {
+         _animTimer = 0;
+         _animFrameIndex = (_animFrameIndex + 1) % _svgRunFrames.length;
+       }
+    } else {
+      _animFrameIndex = 0;
     }
   }
 
@@ -1103,15 +1133,20 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       Paint()..color = Colors.black.withOpacity(0.3 * (alpha/255))
     );
 
-    if (_svg != null) {
+    Svg? renderSvg = _svg;
+    if (_isMoving && _svgRunFrames.isNotEmpty) {
+      renderSvg = _svgRunFrames[_animFrameIndex];
+    }
+
+    if (renderSvg != null) {
       // Apply alpha to SVG? Svg render doesn't support alpha directly easily.
       // We can use saveLayer/opacity if needed, but for now simple render.
       if (modifier == EnemyModifier.ghostly) {
          canvas.saveLayer(null, Paint()..color = Colors.white.withAlpha(alpha));
-         _svg!.render(canvas, Vector2.all(size.x));
+         renderSvg.render(canvas, Vector2.all(size.x));
          canvas.restore();
       } else {
-         _svg!.render(canvas, Vector2.all(size.x));
+         renderSvg.render(canvas, Vector2.all(size.x));
       }
     }
 
@@ -1207,6 +1242,43 @@ class EnemyProjectile extends PositionComponent with HasGameRef<RpgGame> {
   }
 }
 
+class ArrowProjectile extends EnemyProjectile {
+  late Svg _arrowSvg;
+
+  ArrowProjectile(Vector2 pos, Vector2 target) : super(pos, target);
+
+  @override
+  Future<void> onLoad() async {
+    await super.onLoad();
+    _arrowSvg = await Svg.load('images/arrow.svg');
+    size = Vector2(40, 10); // Arrow size
+    // Calculate angle based on velocity
+    angle = atan2(velocity.y, velocity.x);
+  }
+
+  @override
+  void render(Canvas canvas) {
+    // Render arrow aligned with rotation (handled by angle property)
+    // SVG is drawn at top-left 0,0.
+    // We should center it?
+    // PositionComponent with Anchor.center draws at -size/2..size/2 relative to position.
+    // render is called with canvas transformed to position and rotated by angle.
+    // (0,0) is center.
+    // SVG is 100x20.
+    // If we draw it at (0,0) with size (40, 10), it will be from center to bottom right?
+    // Flame canvas is usually pre-translated by anchor.
+    // If anchor is center, (0,0) is top-left of component? No.
+    // Flame 1.x: render(canvas) is in local coordinate system. (0,0) is top-left.
+    // If we set anchor to center, the component is offset by -width/2, -height/2.
+    // So (0,0) is the top-left of the box.
+    // The visual center is at (width/2, height/2).
+    // The rotation happens around the anchor point (center).
+    // So we just draw at (0,0).
+
+    _arrowSvg.render(canvas, size);
+  }
+}
+
 class ShooterEnemy extends Enemy {
   double _shootTimer = 0.0;
   Svg? _archerSvg;
@@ -1221,6 +1293,11 @@ class ShooterEnemy extends Enemy {
 
     _archerSvg = await Svg.load('images/enemy_archer.svg');
     _svg = _archerSvg; // Set parent _svg to this one so Enemy.render uses it
+
+    // Clear frames and add archer frames
+    _svgRunFrames.clear();
+    _svgRunFrames.add(await Svg.load('images/enemy_archer_run_1.svg'));
+    _svgRunFrames.add(await Svg.load('images/enemy_archer_run_2.svg'));
   }
 
   // We can remove render override and let Enemy.render handle it, since we set _svg!
@@ -1237,6 +1314,9 @@ class ShooterEnemy extends Enemy {
     if (_knockbackVelocity.length > 5) {
       position.add(_knockbackVelocity * dt);
       _knockbackVelocity.scale(0.9);
+      _isMoving = true;
+    } else {
+      _isMoving = false; // Will set to true if we move below
     }
 
     // Custom movement: maintain distance
@@ -1245,15 +1325,39 @@ class ShooterEnemy extends Enemy {
 
     if (dist < 300) {
        position -= dir * 80 * dt; // Retreat
+       _isMoving = true;
+       // Face away
+       if (-dir.x < 0) scale = Vector2(-1, 1);
+       else scale = Vector2.all(1);
     } else if (dist > 500) {
        position += dir * 100 * dt; // Chase
+       _isMoving = true;
+       // Face player
+       if (dir.x < 0) scale = Vector2(-1, 1);
+       else scale = Vector2.all(1);
+    } else {
+       // Standing still
+       // Face player
+       if (dir.x < 0) scale = Vector2(-1, 1);
+       else scale = Vector2.all(1);
     }
 
     // Shoot Logic
     _shootTimer += dt;
     if (_shootTimer > 2.0) {
        _shootTimer = 0.0;
-       gameRef.world.add(EnemyProjectile(position, gameRef.player.position));
+       gameRef.world.add(ArrowProjectile(position, gameRef.player.position));
+    }
+
+    // Animation Logic (Copied from Enemy since we override update)
+    if (_isMoving && _svgRunFrames.isNotEmpty) {
+       _animTimer += dt;
+       if (_animTimer > 0.2) {
+         _animTimer = 0;
+         _animFrameIndex = (_animFrameIndex + 1) % _svgRunFrames.length;
+       }
+    } else {
+      _animFrameIndex = 0;
     }
   }
 }
