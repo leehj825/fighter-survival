@@ -1207,3 +1207,130 @@ class ShooterEnemy extends Enemy {
 }
 
 enum EnemyModifier { none, swift, ghostly, regen }
+
+// --- MISSING CLASSES RESTORED ---
+
+class OrbitalShield extends PositionComponent {
+  final Player player;
+  double _angle = 0.0;
+  static const double _orbitRadius = 80.0;
+  static const double _speed = 2.0;
+
+  OrbitalShield(this.player) : super(size: Vector2.all(20), anchor: Anchor.center);
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (player.isRemoved) {
+      removeFromParent();
+      return;
+    }
+
+    _angle += _speed * dt;
+    position = player.position + Vector2(cos(_angle), sin(_angle)) * _orbitRadius;
+
+    // Collision with enemies
+    final game = findGame()! as RpgGame;
+    for (final child in game.world.children) {
+      if (child is Enemy) {
+        if (child.position.distanceTo(position) < (child.size.x / 2 + size.x / 2)) {
+           child.takeDamage(100, knockbackDir: child.position - player.position);
+        }
+      }
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawCircle(Offset(size.x/2, size.y/2), 8, Paint()..color = Colors.cyanAccent..style = PaintingStyle.stroke..strokeWidth = 2);
+    canvas.drawCircle(Offset(size.x/2, size.y/2), 4, Paint()..color = Colors.white);
+  }
+}
+
+class Barrel extends PositionComponent with HasGameRef<RpgGame> {
+  double radius = 25;
+  int health = 3;
+
+  Barrel() : super(anchor: Anchor.center, size: Vector2.all(50));
+
+  void takeDamage() {
+    health--;
+    if (health <= 0) {
+      explode();
+    }
+  }
+
+  void explode() {
+    if (isRemoved) return;
+    removeFromParent();
+    gameRef.world.add(VisualEffects.createExplosion(position, scale: 2.0));
+    SoundService.instance.playExplosion(); // Re-using existing sound
+
+    // Area Damage
+    for (final child in gameRef.world.children) {
+      if (child is Enemy) {
+        if (child.position.distanceTo(position) < 150) {
+          child.takeDamage(50, knockbackDir: child.position - position);
+        }
+      }
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    // Draw Barrel
+    canvas.drawRect(Rect.fromLTWH(0, 0, width, height), Paint()..color = Colors.brown.shade700);
+    canvas.drawLine(Offset(0, 10), Offset(width, 10), Paint()..color = Colors.black..strokeWidth = 2);
+    canvas.drawLine(Offset(0, height - 10), Offset(width, height - 10), Paint()..color = Colors.black..strokeWidth = 2);
+  }
+}
+
+class SpikeTrap extends PositionComponent with HasGameRef<RpgGame> {
+  SpikeTrap() : super(anchor: Anchor.center, size: Vector2.all(40));
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    // Player collision
+    if (gameRef.player.position.distanceTo(position) < 30) {
+       gameRef.player.takeDamage(5);
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawRect(Rect.fromLTWH(0, 0, width, height), Paint()..color = Colors.grey.shade800);
+    // Spikes
+    Paint p = Paint()..color = Colors.grey.shade400;
+    canvas.drawCircle(Offset(10, 10), 5, p);
+    canvas.drawCircle(Offset(30, 10), 5, p);
+    canvas.drawCircle(Offset(10, 30), 5, p);
+    canvas.drawCircle(Offset(30, 30), 5, p);
+  }
+}
+
+class MagnetItem extends PositionComponent {
+  double _hoverTime = 0.0;
+
+  MagnetItem() : super(anchor: Anchor.center, size: Vector2.all(30));
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _hoverTime += dt;
+    // Hover effect
+    final double offset = sin(_hoverTime * 3) * 5;
+    // Visual only offset, actual position stays
+  }
+
+  @override
+  void render(Canvas canvas) {
+     // Draw Magnet U-shape
+     Paint p = Paint()..color = Colors.red..style = PaintingStyle.stroke..strokeWidth = 6..strokeCap = StrokeCap.round;
+     canvas.drawArc(Rect.fromLTWH(5, 5, 20, 20), 0, -pi, false, p);
+     // Tips
+     Paint tip = Paint()..color = Colors.grey.shade300;
+     canvas.drawRect(Rect.fromLTWH(5, 15, 6, 6), tip);
+     canvas.drawRect(Rect.fromLTWH(19, 15, 6, 6), tip);
+  }
+}
