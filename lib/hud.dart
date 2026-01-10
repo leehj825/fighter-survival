@@ -24,6 +24,18 @@ class Hud extends PositionComponent with HasGameRef<RpgGame> {
     ),
   );
 
+  final TextComponent bossWarningText = TextComponent(
+    text: 'WARNING: GIANT ENEMY APPROACHING',
+    anchor: Anchor.center,
+    textRenderer: TextPaint(
+      style: const TextStyle(
+        color: Colors.redAccent,
+        fontSize: 32,
+        fontWeight: FontWeight.bold,
+      ),
+    ),
+  );
+
   final Paint _barBgPaint = Paint()..color = Colors.grey.withOpacity(0.5);
   final Paint _barFillPaint = Paint()..color = Colors.cyanAccent;
   final Paint _hpBarFillPaint = Paint()..color = Colors.green;
@@ -35,12 +47,15 @@ class Hud extends PositionComponent with HasGameRef<RpgGame> {
   Future<void> onLoad() async {
     add(scoreText);
     add(storyText);
+    add(bossWarningText);
+    bossWarningText.textRenderer = TextPaint(style: (bossWarningText.textRenderer as TextPaint).style.copyWith(color: Colors.transparent));
   }
 
   @override
   void onGameResize(Vector2 size) {
     super.onGameResize(size);
     storyText.position = Vector2(size.x / 2, size.y - 50);
+    bossWarningText.position = size / 2;
   }
 
   @override
@@ -75,6 +90,16 @@ class Hud extends PositionComponent with HasGameRef<RpgGame> {
     storyText.text = message;
     Future.delayed(const Duration(seconds: 4), () {
       if (storyText.text == message) storyText.text = "";
+    });
+  }
+
+  void showBossWarning() {
+    // Fade In
+    bossWarningText.textRenderer = TextPaint(style: (bossWarningText.textRenderer as TextPaint).style.copyWith(color: Colors.redAccent));
+
+    // Flash effect or just show for a few seconds
+    Future.delayed(const Duration(seconds: 4), () {
+      bossWarningText.textRenderer = TextPaint(style: (bossWarningText.textRenderer as TextPaint).style.copyWith(color: Colors.transparent));
     });
   }
 }

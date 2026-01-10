@@ -310,6 +310,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       // Randomly pick a modifier
       final modifier = EnemyModifier.values[rng.nextInt(EnemyModifier.values.length)];
       world.add(Enemy(isElite: true, modifier: modifier)..position = player.position + Vector2(600, 0));
+      hud.showBossWarning();
     }
   }
 
@@ -715,7 +716,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
 
     // Initialize Animator instead of SVGs
-    _animator = StickmanAnimator(color: Colors.cyanAccent, scale: 1.2);
+    // Set Animator to use Kick by default for attacks and remove stick weapon
+    _animator = StickmanAnimator(color: Colors.cyanAccent, scale: 1.2, attackType: AttackType.kick, weaponType: WeaponType.none);
   }
 
   @override
@@ -763,7 +765,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     // Render Procedural Stickman
     // We pass (size/2) + offset so feet align with shadow
-    _animator.render(canvas, Vector2(size.x / 2, size.y / 2 + 10), size.y);
+    // Pass isDashing to render for the Punch pose
+    _animator.render(canvas, Vector2(size.x / 2, size.y / 2 + 10), size.y, isDashing: isDashing);
   }
 
   // ... Keep existing methods (dash, slash, shoot, gainXp, etc) ...
@@ -782,12 +785,19 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   }
 
   void slash() {
-    if (isSlashing) return;
+    if (isSlashing || isDashing) return;
     isSlashing = true;
-    _animator.isAttacking = true; // Trigger animator punch/slash
-    final sword = SwordEffect();
-    sword.position = size / 2;
-    add(sword);
+    _animator.isAttacking = true;
+    _animator.attackType = AttackType.kick; // Ensure it kicks
+
+    // Use Hurricane Effect instead of Sword
+    final hurricane = HurricaneKickEffect();
+    // Match visual offset of stickman (centered horizontally, shifted down 10px vertically)
+    hurricane.position = size / 2 + Vector2(0, 10);
+    add(hurricane);
+
+    // Play swoosh sound if available
+    // SoundService.instance.playSwoosh();
   }
 
   // ... shoot, gainXp, _levelUp, takeDamage same as before ...
@@ -1207,3 +1217,179 @@ class ShooterEnemy extends Enemy {
 }
 
 enum EnemyModifier { none, swift, ghostly, regen }
+
+// --- MISSING CLASSES RESTORED ---
+
+class OrbitalShield extends PositionComponent {
+  final Player player;
+  double _angle = 0.0;
+  static const double _orbitRadius = 80.0;
+  static const double _speed = 2.0;
+
+  OrbitalShield(this.player) : super(size: Vector2.all(20), anchor: Anchor.center);
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (player.isRemoved) {
+      removeFromParent();
+      return;
+    }
+
+    _angle += _speed * dt;
+    position = player.position + Vector2(cos(_angle), sin(_angle)) * _orbitRadius;
+
+    // Collision with enemies
+    final game = findGame()! as RpgGame;
+    for (final child in game.world.children) {
+      if (child is Enemy) {
+        if (child.position.distanceTo(position) < (child.size.x / 2 + size.x / 2)) {
+           child.takeDamage(100, knockbackDir: child.position - player.position);
+        }
+      }
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawCircle(Offset(size.x/2, size.y/2), 8, Paint()..color = Colors.cyanAccent..style = PaintingStyle.stroke..strokeWidth = 2);
+    canvas.drawCircle(Offset(size.x/2, size.y/2), 4, Paint()..color = Colors.white);
+  }
+}
+
+class Barrel extends PositionComponent with HasGameRef<RpgGame> {
+  double radius = 25;
+  int health = 3;
+
+  Barrel() : super(anchor: Anchor.center, size: Vector2.all(50));
+
+  void takeDamage() {
+    health--;
+    if (health <= 0) {
+      explode();
+    }
+  }
+
+  void explode() {
+    if (isRemoved) return;
+    removeFromParent();
+    gameRef.world.add(VisualEffects.createExplosion(position, scale: 2.0));
+    SoundService.instance.playExplosion(); // Re-using existing sound
+
+    // Area Damage
+    for (final child in gameRef.world.children) {
+      if (child is Enemy) {
+        if (child.position.distanceTo(position) < 150) {
+          child.takeDamage(50, knockbackDir: child.position - position);
+        }
+      }
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    // Draw Barrel
+    canvas.drawRect(Rect.fromLTWH(0, 0, width, height), Paint()..color = Colors.brown.shade700);
+    canvas.drawLine(Offset(0, 10), Offset(width, 10), Paint()..color = Colors.black..strokeWidth = 2);
+    canvas.drawLine(Offset(0, height - 10), Offset(width, height - 10), Paint()..color = Colors.black..strokeWidth = 2);
+  }
+}
+
+class SpikeTrap extends PositionComponent with HasGameRef<RpgGame> {
+  SpikeTrap() : super(anchor: Anchor.center, size: Vector2.all(40));
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    // Player collision
+    if (gameRef.player.position.distanceTo(position) < 30) {
+       gameRef.player.takeDamage(5);
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawRect(Rect.fromLTWH(0, 0, width, height), Paint()..color = Colors.grey.shade800);
+    // Spikes
+    Paint p = Paint()..color = Colors.grey.shade400;
+    canvas.drawCircle(Offset(10, 10), 5, p);
+    canvas.drawCircle(Offset(30, 10), 5, p);
+    canvas.drawCircle(Offset(10, 30), 5, p);
+    canvas.drawCircle(Offset(30, 30), 5, p);
+  }
+}
+
+class MagnetItem extends PositionComponent {
+  double _hoverTime = 0.0;
+
+  MagnetItem() : super(anchor: Anchor.center, size: Vector2.all(30));
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _hoverTime += dt;
+    // Hover effect
+    final double offset = sin(_hoverTime * 3) * 5;
+    // Visual only offset, actual position stays
+  }
+
+  @override
+  void render(Canvas canvas) {
+     // Draw Magnet U-shape
+     Paint p = Paint()..color = Colors.red..style = PaintingStyle.stroke..strokeWidth = 6..strokeCap = StrokeCap.round;
+     canvas.drawArc(Rect.fromLTWH(5, 5, 20, 20), 0, -pi, false, p);
+     // Tips
+     Paint tip = Paint()..color = Colors.grey.shade300;
+     canvas.drawRect(Rect.fromLTWH(5, 15, 6, 6), tip);
+     canvas.drawRect(Rect.fromLTWH(19, 15, 6, 6), tip);
+  }
+}
+
+class HurricaneKickEffect extends PositionComponent {
+  double _lifeTime = 0.0;
+  static const double _duration = 0.3;
+  final Paint _paint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 3.0
+    ..strokeCap = StrokeCap.round;
+
+  HurricaneKickEffect() : super(anchor: Anchor.center, size: Vector2.all(100)); // Larger area
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _lifeTime += dt;
+    if (_lifeTime >= _duration) {
+      if (parent is Player) {
+        (parent as Player).isSlashing = false;
+      }
+      removeFromParent();
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    // Draw a spinning "hurricane" spiral
+    double progress = _lifeTime / _duration;
+    double opacity = (1.0 - progress).clamp(0.0, 1.0);
+    _paint.color = Colors.cyanAccent.withOpacity(opacity);
+
+    canvas.save();
+    // Center logic: Move to center of component (50, 50) since size is 100
+    canvas.translate(size.x / 2, size.y / 2);
+    canvas.rotate(progress * pi * 4); // Fast spin
+
+    // Draw spiral lines
+    for(int i=0; i<3; i++) {
+       canvas.drawArc(
+         Rect.fromCircle(center: Offset.zero, radius: 40 + (i * 5) + (progress * 20)),
+         (i * 2.0),
+         2.0,
+         false,
+         _paint
+       );
+    }
+
+    canvas.restore();
+  }
+}
