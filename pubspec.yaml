@@ -9,8 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flame: ^1.16.0
-  flame_svg: ^1.16.0
+  flame: ^1.11.0
+  flame_svg: ^1.11.18
   shared_preferences: ^2.2.0
   audioplayers: ^6.0.0
 

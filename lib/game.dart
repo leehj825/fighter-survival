@@ -1215,14 +1215,9 @@ class ShooterEnemy extends Enemy {
 
   @override
   Future<void> onLoad() async {
-    // Override default Enemy onLoad to load archer SVG specifically
-    // We avoid calling super.onLoad() to prevent loading the default sword/boss SVG.
-    // Enemy.onLoad only loads SVGs, so skipping it is safe and more efficient.
-
-    // Call PositionComponent.onLoad via super.super?? No, just don't call super.onLoad
-    // if super is Enemy and Enemy.onLoad is what we want to skip.
-    // But we should ensure we don't miss anything from PositionComponent.onLoad (which is empty usually).
-    // Let's just load our SVG.
+    // We call super.onLoad() to ensure proper initialization of the component chain.
+    // This will load the default SVG (sword/boss), but we will immediately overwrite it.
+    await super.onLoad();
 
     _archerSvg = await Svg.load('images/enemy_archer.svg');
     _svg = _archerSvg; // Set parent _svg to this one so Enemy.render uses it
