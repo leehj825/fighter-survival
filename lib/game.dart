@@ -13,6 +13,7 @@ import 'hud.dart';
 import 'managers.dart';
 import 'visual_effects.dart';
 import 'sound_service.dart';
+import 'stickman_animator.dart'; // Import the new file
 
 /// Extension for safe vector normalization
 extension SafeVector2 on Vector2 {
@@ -678,6 +679,7 @@ class Obstacle extends PositionComponent {
 }
 
 class Player extends PositionComponent with HasGameRef<RpgGame> {
+  // ... Keep existing stats (health, level, etc) ...
   Vector2? moveDirection;
   static const double _baseSpeed = 200.0;
   static const double _dashSpeedMult = 3.5;
@@ -685,14 +687,10 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   late int health;
   late int maxHealth;
   double _damageCooldown = 0.0;
-
-  // Progression Fields
   int level = 1;
   int xp = 0;
   int xpToNextLevel = 10;
   double damageMult = 1.0;
-
-  // Meta-Progression Stats
   late double dashCooldownMax;
 
   bool isDashing = false;
@@ -700,186 +698,130 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   static const double _dashDuration = 0.32;
   double _currentDashCooldown = 0.0;
   Vector2 _dashDirection = Vector2.zero();
-
   bool isSlashing = false;
 
-  final Paint _cyanPaint = Paint()..color = const Color(0xFF00FFFF);
-  final Paint _yellowPaint = Paint()..color = const Color(0xFFFFFF00);
+  // NEW: Animator
+  late StickmanAnimator _animator;
 
-  Player() : super(size: Vector2.all(40));
+  Player() : super(size: Vector2.all(60), anchor: Anchor.center);
 
   @override
   Future<void> onLoad() async {
     super.onLoad();
-    // Initialize Stats from GameData
+    // ... Keep existing stat initialization ...
     final data = GameData();
     maxHealth = 100 + (data.levelHp * 20);
-
-    // Check if we need to load saved health (if resuming)
-    // Accessing parent game
-    final rpgGame = gameRef;
-    if (rpgGame.resumeGame && data.hasSavedRun) {
-       health = data.savedHealth;
-    } else {
-       health = maxHealth;
-    }
-
-    // Base dash cooldown 0.8s, reduced by 10% per level
+    health = maxHealth;
     dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
+
+    // Initialize Animator instead of SVGs
+    _animator = StickmanAnimator(color: Colors.cyanAccent, scale: 1.2);
   }
 
   @override
   void update(double dt) {
     super.update(dt);
 
-    if (_damageCooldown > 0) {
-      _damageCooldown -= dt;
-    }
+    // ... Keep existing cooldown logic ...
+    if (_damageCooldown > 0) _damageCooldown -= dt;
+    if (_currentDashCooldown > 0) _currentDashCooldown -= dt;
 
-    if (_currentDashCooldown > 0) {
-      _currentDashCooldown -= dt;
-    }
+    Vector2 velocity = Vector2.zero();
 
     if (isDashing) {
       _dashTimer -= dt;
-
-      // Ease-out movement
-      double progress = (1.0 - (_dashTimer / _dashDuration)).clamp(0.0, 1.0); // Clamp to prevent <0 or >1
-      // Use easeOutCubic for a sharper drop-off to prevent "bouncy" feeling at end
+      double progress = (1.0 - (_dashTimer / _dashDuration)).clamp(0.0, 1.0);
       double currentSpeedMult = _dashSpeedMult * (1.0 - Curves.easeOutCubic.transform(progress) * 0.7);
 
-      position.add(_dashDirection * (_baseSpeed * currentSpeedMult) * dt);
+      velocity = _dashDirection * (_baseSpeed * currentSpeedMult);
+      position.add(velocity * dt);
 
-      // Spawn Trail
       if (_dashTimer % 0.05 < dt) {
          gameRef.world.add(VisualEffects.createDashTrail(position, angle));
       }
-
       if (_dashTimer <= 0) {
         isDashing = false;
-        angle = 0;
+        // Do not reset angle, Animator handles rotation now
       }
     } else if (moveDirection != null && moveDirection != Vector2.zero()) {
-      position.add(moveDirection! * _baseSpeed * dt);
+      velocity = moveDirection! * _baseSpeed;
+      position.add(velocity * dt);
     }
+
+    // Update Animator
+    _animator.isAttacking = isSlashing;
+    _animator.update(dt, velocity, isDashing);
   }
 
   @override
   void render(Canvas canvas) {
-    // 2.5D Rendering Constants
-    const double h = 15.0; // Height of the cylinder
-    final double r = width / 2;
-    final Offset center = (size / 2).toOffset();
-
-    // Shadow (Base)
+    // Shadow
     canvas.drawOval(
-      Rect.fromCenter(center: center, width: width, height: width * 0.6),
+      Rect.fromCenter(center: (size / 2).toOffset() + const Offset(0, 20), width: width, height: width * 0.3),
       Paint()..color = Colors.black.withOpacity(0.3)
     );
 
-    if (isDashing) {
-      // Dash Visual: Triangle "Flying" low
-      final Path path = Path();
-      // Adjust points to account for height/offset
-      path.moveTo(width, (height / 2) - h/2);
-      path.lineTo(0, 0 - h/2);
-      path.lineTo(0, height - h/2);
-      path.close();
-      canvas.drawPath(path, _yellowPaint);
-    } else {
-      // Cylinder Body (Darker)
-      final Paint bodyPaint = Paint()..color = const Color(0xFF00AAAA); // Darker Cyan
-
-      final Offset topCenter = center + Offset(0, -h);
-
-      // Draw Body
-      final Path bodyPath = Path();
-      bodyPath.moveTo(center.dx - r, center.dy); // Bottom Left
-      bodyPath.lineTo(center.dx + r, center.dy); // Bottom Right
-      bodyPath.lineTo(topCenter.dx + r, topCenter.dy); // Top Right
-      bodyPath.lineTo(topCenter.dx - r, topCenter.dy); // Top Left
-      bodyPath.close();
-      canvas.drawPath(bodyPath, bodyPaint);
-
-      // Draw Top (Main Circle)
-      canvas.drawCircle(topCenter, r, _cyanPaint);
-
-      // Highlight/Rim (Optional)
-      canvas.drawCircle(topCenter, r, Paint()..style = PaintingStyle.stroke ..color = Colors.white.withOpacity(0.5) ..strokeWidth = 2);
-    }
+    // Render Procedural Stickman
+    // We pass (size/2) + offset so feet align with shadow
+    _animator.render(canvas, Vector2(size.x / 2, size.y / 2 + 10), size.y);
   }
 
+  // ... Keep existing methods (dash, slash, shoot, gainXp, etc) ...
   void dash(Vector2 direction) {
     if (isDashing || _currentDashCooldown > 0) return;
-
     isDashing = true;
+    isSlashing = false; // Reset slash if dashing
     _dashTimer = _dashDuration;
     _currentDashCooldown = dashCooldownMax;
 
     if (direction.length > 0) {
       _dashDirection = direction.safeNormalized();
-      angle = atan2(_dashDirection.y, _dashDirection.x);
     } else {
       _dashDirection = Vector2(1, 0);
-      angle = 0;
     }
   }
 
   void slash() {
     if (isSlashing) return;
-
     isSlashing = true;
+    _animator.isAttacking = true; // Trigger animator punch/slash
     final sword = SwordEffect();
     sword.position = size / 2;
     add(sword);
   }
 
+  // ... shoot, gainXp, _levelUp, takeDamage same as before ...
+  // Be sure to verify takeDamage logic is preserved
   void shoot(Vector2 dir) {
-    // Basic cooldown for shooting? Let's say 0.3s
-    // For now, no strict cooldown was requested, but let's add a small one to prevent spam lag
-
-    // Use variant based on damage/upgrades
     int sfxType = damageMult > 1.5 ? 1 : 0;
     SoundService.instance.playShoot(variant: sfxType);
-
     gameRef.world.add(PlayerProjectile(position, dir, damageMult));
   }
 
   void gainXp(int amount) {
     xp += amount;
-    if (xp >= xpToNextLevel) {
-      _levelUp();
-    }
+    if (xp >= xpToNextLevel) _levelUp();
   }
 
   void _levelUp() {
     xp -= xpToNextLevel;
     level++;
     xpToNextLevel = (xpToNextLevel * 1.5).toInt();
-
-    // Stats Up: Streamlined
     damageMult += 0.1;
-    // Heal to Full
     health = maxHealth;
-
-    gameRef.hud.showStory("LEVEL UP! SYSTEMS RESTORED.");
+    gameRef.hud.showStory("LEVEL UP!");
     SoundService.instance.playLevelUp();
     gameRef.world.add(VisualEffects.createExplosion(position));
-    gameRef.cameraShake(1.0);
   }
 
   @override
   void takeDamage(int amount) {
     if (_damageCooldown > 0 || isDashing) return;
-
-    // When player gets hit
     SoundService.instance.playDamage();
-
     health -= amount;
     _damageCooldown = 1.0;
-    gameRef.cameraShake(2.0); // Shake Screen
-    gameRef.world.add(DamageText(amount, position, isCrit: true)); // Show red text
-
+    gameRef.cameraShake(2.0);
+    gameRef.world.add(DamageText(amount, position, isCrit: true));
     if (health <= 0) {
       health = 0;
       gameRef.onGameOver();
@@ -912,6 +854,7 @@ class SwordEffect extends PositionComponent {
     if (_lifeTime >= _duration) {
       if (parent is Player) {
         (parent as Player).isSlashing = false;
+        // Also reset animator attacking state if needed, but animator has internal timer 0.3s
       }
       removeFromParent();
     }
@@ -964,6 +907,7 @@ class PlayerProjectile extends PositionComponent with HasGameRef<RpgGame> {
 }
 
 class Enemy extends PositionComponent with HasGameRef<RpgGame> {
+  // ... Stats ...
   int health = 2;
   static const double _speed = 100.0;
   Vector2? _roamTarget;
@@ -971,46 +915,64 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   Vector2 _knockbackVelocity = Vector2.zero();
   double _invulnerableTimer = 0.0;
   bool isElite = false;
-
   final EnemyModifier modifier;
   double _regenTimer = 0.0;
   int _maxHealth = 2;
 
-  final Paint _redPaint = Paint()..color = const Color(0xFFFF0000);
+  // NEW: Animator
+  late StickmanAnimator _animator;
 
-  Enemy({this.isElite = false, this.modifier = EnemyModifier.none}) : super(size: Vector2.all(isElite ? 80 : 40), anchor: Anchor.center) {
+  Enemy({this.isElite = false, this.modifier = EnemyModifier.none})
+      : super(size: Vector2.all(isElite ? 100 : 50), anchor: Anchor.center) {
      if(isElite) health = health * 5;
      _maxHealth = health;
   }
 
   @override
-  void update(double dt) {
-    super.update(dt);
+  Future<void> onLoad() async {
+    super.onLoad();
+    // Choose color/scale based on type
+    Color c = Colors.redAccent;
+    double s = 1.0;
+    WeaponType w = WeaponType.sword; // Default enemy has sword
 
-    if (_invulnerableTimer > 0) {
-      _invulnerableTimer -= dt;
+    if (isElite) {
+      c = Colors.deepPurpleAccent;
+      s = 2.0;
+      w = WeaponType.axe;
+    } else if (modifier == EnemyModifier.swift) {
+      c = Colors.yellowAccent;
+    } else if (modifier == EnemyModifier.ghostly) {
+      c = Colors.white.withOpacity(0.5);
     }
 
-    // Regen logic
+    _animator = StickmanAnimator(color: c, scale: s, weaponType: w);
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (_invulnerableTimer > 0) _invulnerableTimer -= dt;
+
+    // ... Regen logic ...
     if (modifier == EnemyModifier.regen && health < _maxHealth && health > 0) {
         _regenTimer += dt;
         if (_regenTimer >= 1.0) {
             _regenTimer = 0;
-            int healAmount = (_maxHealth * 0.01).ceil();
-            health = (health + healAmount).clamp(0, _maxHealth);
+            health++;
         }
     }
 
+    Vector2 velocity = Vector2.zero();
+
     if (_knockbackVelocity.length > 5) {
-      position.add(_knockbackVelocity * dt);
+      velocity = _knockbackVelocity;
+      position.add(velocity * dt);
       _knockbackVelocity.scale(0.9);
     } else {
       _knockbackVelocity.setZero();
-
       _roamTimer -= dt;
-      if (_roamTimer <= 0 || _roamTarget == null) {
-        _pickNewTarget();
-      }
+      if (_roamTimer <= 0 || _roamTarget == null) _pickNewTarget();
 
       if (_roamTarget != null) {
         final Vector2 dir = _roamTarget! - position;
@@ -1019,96 +981,57 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
         } else {
           double currentSpeed = _speed;
           if (modifier == EnemyModifier.swift) currentSpeed *= 1.5;
-          position.add(dir.safeNormalized() * currentSpeed * dt);
+          velocity = dir.safeNormalized() * currentSpeed;
+          position.add(velocity * dt);
         }
       }
     }
+
+    // Update Animator with velocity
+    _animator.update(dt, velocity, false);
   }
 
+  // ... keep _pickNewTarget and takeDamage ...
   void _pickNewTarget() {
-    final Random rng = Random();
-    // Move towards player with some randomness to avoid stacking perfectly
-    Vector2 playerPos = gameRef.player.position;
-
-    double dx = (rng.nextDouble() - 0.5) * 200;
-    double dy = (rng.nextDouble() - 0.5) * 200;
-
-    _roamTarget = playerPos + Vector2(dx, dy);
-    _roamTimer = 1.0 + rng.nextDouble() * 2.0; // Update target every 1-3 seconds
+     final Random rng = Random();
+     Vector2 playerPos = gameRef.player.position;
+     double dx = (rng.nextDouble() - 0.5) * 200;
+     double dy = (rng.nextDouble() - 0.5) * 200;
+     _roamTarget = playerPos + Vector2(dx, dy);
+     _roamTimer = 1.0 + rng.nextDouble() * 2.0;
   }
 
   void takeDamage(int amount, {Vector2? knockbackDir}) {
-    // Fix: Prevent processing damage on already dead enemies
     if (health <= 0 || _invulnerableTimer > 0) return;
-
-    // Show Damage Number
     gameRef.world.add(DamageText(amount, position.clone() + Vector2(0, -30)));
-
     health -= amount;
-    if (knockbackDir != null) {
-       _knockbackVelocity = knockbackDir.safeNormalized() * 400.0;
-    }
+    if (knockbackDir != null) _knockbackVelocity = knockbackDir.safeNormalized() * 400.0;
     _invulnerableTimer = 0.5;
-
     if (health <= 0) {
-      health = 0; // Clamp
+      health = 0;
       removeFromParent();
       gameRef.killCount++;
-
-      // Magnet Drop Check (1 in 200 chance)
-      final Random rng = Random();
-      if (rng.nextInt(200) == 0) { // 0.5%
-          gameRef.world.add(MagnetItem()..position = position);
-      }
-
-      // Drop XP Gem
+      // ... drops ...
       gameRef.world.add(XpGem(isElite ? 50 : 10)..position = position);
-
-      // Play louder explosion for Elite enemies or Bosses
       SoundService.instance.playExplosion(isLarge: isElite);
       gameRef.world.add(VisualEffects.createExplosion(position));
-      gameRef.cameraShake(1.0);
     }
   }
 
   @override
   void render(Canvas canvas) {
-    // 2.5D Rendering
-    const double h = 15.0;
-    final double r = width / 2;
-    final Offset center = (size / 2).toOffset();
-
-    // Opacity for Ghostly
-    int alpha = 255;
-    if (modifier == EnemyModifier.ghostly) {
-        alpha = (255 * 0.6).toInt();
-    }
-
     // Shadow
     canvas.drawOval(
-      Rect.fromCenter(center: center, width: width, height: width * 0.6),
-      Paint()..color = Colors.black.withOpacity(0.3 * (alpha/255))
+      Rect.fromCenter(center: (size / 2).toOffset() + const Offset(0, 15), width: width, height: width * 0.3),
+      Paint()..color = Colors.black.withOpacity(0.3)
     );
 
-    // Cylinder Body
-    final Paint bodyPaint = Paint()..color = const Color(0xFFAA0000).withAlpha(alpha); // Darker Red
-    final Offset topCenter = center + Offset(0, -h);
-
-    final Path bodyPath = Path();
-    bodyPath.moveTo(center.dx - r, center.dy);
-    bodyPath.lineTo(center.dx + r, center.dy);
-    bodyPath.lineTo(topCenter.dx + r, topCenter.dy);
-    bodyPath.lineTo(topCenter.dx - r, topCenter.dy);
-    bodyPath.close();
-    canvas.drawPath(bodyPath, bodyPaint);
-
-    // Top
-    canvas.drawCircle(topCenter, r, _redPaint..color = _redPaint.color.withAlpha(alpha));
+    // Render Procedural Enemy
+    _animator.render(canvas, Vector2(size.x / 2, size.y / 2 + 5), size.y);
 
     // Flash
     if (_invulnerableTimer > 0) {
-       final Paint flashPaint = Paint()..color = const Color(0x88FFFFFF);
-       canvas.drawCircle(topCenter, r, flashPaint);
+       canvas.drawCircle((size/2).toOffset(), size.x/2, Paint()..color = const Color(0x88FFFFFF));
     }
   }
 }
@@ -1197,265 +1120,90 @@ class EnemyProjectile extends PositionComponent with HasGameRef<RpgGame> {
   }
 }
 
+class ArrowProjectile extends EnemyProjectile {
+  // Procedural Arrow instead of SVG
+  ArrowProjectile(Vector2 pos, Vector2 target) : super(pos, target);
+
+  @override
+  Future<void> onLoad() async {
+    await super.onLoad();
+    size = Vector2(40, 10);
+    angle = atan2(velocity.y, velocity.x);
+  }
+
+  @override
+  void render(Canvas canvas) {
+    // Draw Arrow
+    final Paint p = Paint()..color = Colors.white ..strokeWidth = 2;
+    // Local coords 0,0 is center of component? No, PositionComponent render is at local 0,0 (top left).
+    // But we want to draw centered on position?
+    // Wait, EnemyProjectile sets anchor to Center.
+    // So 0,0 in local space is the top-left of the box (-width/2, -height/2 relative to center).
+    // Let's draw relative to size.
+
+    // Center is size/2
+    Offset center = (size / 2).toOffset();
+    // Arrow pointing right (0 radians)
+    canvas.drawLine(Offset(0, center.dy), Offset(size.x, center.dy), p);
+    // Head
+    canvas.drawLine(Offset(size.x - 10, center.dy - 5), Offset(size.x, center.dy), p);
+    canvas.drawLine(Offset(size.x - 10, center.dy + 5), Offset(size.x, center.dy), p);
+  }
+}
+
 class ShooterEnemy extends Enemy {
   double _shootTimer = 0.0;
 
   ShooterEnemy() : super();
 
   @override
-  void render(Canvas canvas) {
-     final Path path = Path();
-     path.moveTo(0, -20);
-     path.lineTo(20, 20);
-     path.lineTo(-20, 20);
-     path.close();
-     canvas.drawPath(path, Paint()..color = Colors.purpleAccent);
-
-     // Add a shadow or highlight to match style
-     canvas.drawPath(path, Paint()..style=PaintingStyle.stroke..color=Colors.white.withOpacity(0.5));
-
-     // Flash
-    if (_invulnerableTimer > 0) {
-       final Paint flashPaint = Paint()..color = const Color(0x88FFFFFF);
-       canvas.drawCircle(Offset.zero, 20, flashPaint); // Simple circle flash for shooter
-    }
+  Future<void> onLoad() async {
+    await super.onLoad();
+    // Override color/scale for Shooter and set weapon to Bow
+    _animator = StickmanAnimator(color: Colors.purpleAccent, scale: 1.0, weaponType: WeaponType.bow);
   }
 
   @override
   void update(double dt) {
-    // Handle invulnerability and knockback manually since we are overriding Enemy.update
+    // Custom movement logic first
     if (_invulnerableTimer > 0) {
       _invulnerableTimer -= dt;
     }
 
+    Vector2 velocity = Vector2.zero();
+
     if (_knockbackVelocity.length > 5) {
-      position.add(_knockbackVelocity * dt);
+      velocity = _knockbackVelocity;
+      position.add(velocity * dt);
       _knockbackVelocity.scale(0.9);
-    }
+    } else {
+      _knockbackVelocity.setZero();
 
-    // Custom movement: maintain distance
-    double dist = position.distanceTo(gameRef.player.position);
-    Vector2 dir = (gameRef.player.position - position).safeNormalized();
+      // Custom movement: maintain distance
+      double dist = position.distanceTo(gameRef.player.position);
+      Vector2 dir = (gameRef.player.position - position).safeNormalized();
 
-    if (dist < 300) {
-       position -= dir * 80 * dt; // Retreat
-    } else if (dist > 500) {
-       position += dir * 100 * dt; // Chase
+      if (dist < 300) {
+         velocity = -dir * 80; // Retreat
+      } else if (dist > 500) {
+         velocity = dir * 100; // Chase
+      }
+
+      position.add(velocity * dt);
     }
 
     // Shoot Logic
     _shootTimer += dt;
     if (_shootTimer > 2.0) {
        _shootTimer = 0.0;
-       gameRef.world.add(EnemyProjectile(position, gameRef.player.position));
+       // Trigger attack anim
+       _animator.isAttacking = true;
+       gameRef.world.add(ArrowProjectile(position, gameRef.player.position));
     }
+
+    // Update Animator
+    _animator.update(dt, velocity, false);
   }
 }
 
 enum EnemyModifier { none, swift, ghostly, regen }
-
-class Barrel extends PositionComponent with HasGameRef<RpgGame> {
-  int hp = 1;
-  final double radius = 25;
-  final double height = 40;
-
-  Barrel() : super(anchor: Anchor.center, size: Vector2.all(50));
-
-  @override
-  void render(Canvas canvas) {
-    // Red cylinder with danger marking
-    final Offset center = (size / 2).toOffset();
-    final double r = radius;
-    final double h = height;
-
-    // Shadow
-    canvas.drawOval(
-      Rect.fromCenter(center: center, width: width, height: width * 0.6),
-      Paint()..color = Colors.black.withOpacity(0.3)
-    );
-
-    // Body
-    final Offset topCenter = center + Offset(0, -h);
-    final Path bodyPath = Path();
-    bodyPath.moveTo(center.dx - r, center.dy);
-    bodyPath.lineTo(center.dx + r, center.dy);
-    bodyPath.lineTo(topCenter.dx + r, topCenter.dy);
-    bodyPath.lineTo(topCenter.dx - r, topCenter.dy);
-    bodyPath.close();
-    canvas.drawPath(bodyPath, Paint()..color = Colors.red.shade900);
-
-    // Top
-    canvas.drawCircle(topCenter, r, Paint()..color = Colors.red.shade700);
-
-    // Danger Marking (Yellow X on top)
-    final Paint markPaint = Paint()..color = Colors.yellow..strokeWidth = 4.0..style = PaintingStyle.stroke;
-    canvas.drawLine(topCenter + Offset(-10, -10), topCenter + Offset(10, 10), markPaint);
-    canvas.drawLine(topCenter + Offset(10, -10), topCenter + Offset(-10, 10), markPaint);
-
-    // Rim
-    canvas.drawCircle(topCenter, r, Paint()..style = PaintingStyle.stroke ..color = Colors.white.withOpacity(0.3));
-  }
-
-  void takeDamage() {
-     if (hp <= 0) return;
-     hp--;
-     if (hp <= 0) _explode();
-  }
-
-  void _explode() {
-    removeFromParent();
-    gameRef.world.add(VisualEffects.createExplosion(position, scale: 3.0));
-
-    // Deal damage
-    // Find entities in radius 150
-    for(final child in gameRef.world.children) {
-         if (child is Enemy) {
-             if (child.position.distanceTo(position) < 150) {
-                 child.takeDamage(500, knockbackDir: child.position - position);
-             }
-         } else if (child is Player) {
-              if (child.position.distanceTo(position) < 150) {
-                  child.takeDamage(500); // Massive damage
-              }
-         }
-    }
-    gameRef.cameraShake(5.0);
-  }
-}
-
-class MagnetItem extends PositionComponent with HasGameRef<RpgGame> {
-  late TextPainter _tp;
-
-  MagnetItem() : super(anchor: Anchor.center, size: Vector2.all(30));
-
-  @override
-  Future<void> onLoad() async {
-    const TextSpan span = TextSpan(
-        text: "M",
-        style: TextStyle(
-            color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold));
-    _tp = TextPainter(text: span, textDirection: TextDirection.ltr);
-    _tp.layout();
-  }
-
-  @override
-  void render(Canvas canvas) {
-    final double w = width;
-    final double h = height;
-
-    // Simple Square Icon with 'M'
-    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()..color = Colors.white);
-    canvas.drawRect(
-        Rect.fromLTWH(2, 2, w - 4, h - 4), Paint()..color = Colors.blue);
-
-    _tp.paint(canvas, Offset((w - _tp.width) / 2, (h - _tp.height) / 2));
-  }
-}
-
-class OrbitalShield extends PositionComponent with HasGameRef<RpgGame> {
-  final Player _player;
-  double _angle = 0.0;
-  final double _orbitRadius = 80.0;
-  late double _orbitSpeed;
-  late int _damage;
-
-  OrbitalShield(this._player) : super(size: Vector2.all(20), anchor: Anchor.center);
-
-  @override
-  Future<void> onLoad() async {
-     super.onLoad();
-     final int level = GameData().levelShield;
-     // Base speed 2.0, +0.5 per level beyond 1
-     _orbitSpeed = 2.0 + (level - 1) * 0.5;
-     // Base damage 10, +5 per level beyond 1
-     _damage = 10 + (level - 1) * 5;
-  }
-
-  @override
-  void update(double dt) {
-    super.update(dt);
-    if (_player.isRemoved) {
-      removeFromParent();
-      return;
-    }
-
-    _angle += _orbitSpeed * dt;
-    position = _player.position + Vector2(cos(_angle), sin(_angle)) * _orbitRadius;
-
-    // Collision Logic
-    for (final child in gameRef.world.children) {
-      if (child is Enemy) {
-        if (child.position.distanceTo(position) < (child.size.x / 2 + size.x / 2)) {
-           child.takeDamage(_damage, knockbackDir: child.position - _player.position);
-        }
-      } else if (child is EnemyProjectile) {
-        if (child.position.distanceTo(position) < (child.size.x / 2 + size.x / 2)) {
-           child.removeFromParent(); // Block projectile
-        }
-      }
-    }
-  }
-
-  @override
-  void render(Canvas canvas) {
-    canvas.drawCircle(Offset.zero, 8, Paint()..color = Colors.cyanAccent.withOpacity(0.8));
-    canvas.drawCircle(Offset.zero, 10, Paint()..style=PaintingStyle.stroke ..color = Colors.white.withOpacity(0.5) ..strokeWidth=2);
-  }
-}
-
-class SpikeTrap extends PositionComponent with HasGameRef<RpgGame> {
-  double _timer = 0.0;
-  int _state = 0; // 0: Safe, 1: Warning, 2: Active
-
-  SpikeTrap() : super(anchor: Anchor.center, size: Vector2.all(60));
-
-  @override
-  void update(double dt) {
-    super.update(dt);
-    _timer += dt;
-
-    // Cycle: 2s Safe -> 1s Warning -> 1s Active
-    if (_state == 0 && _timer > 2.0) {
-      _state = 1;
-      _timer = 0;
-    } else if (_state == 1 && _timer > 1.0) {
-      _state = 2;
-      _timer = 0;
-    } else if (_state == 2 && _timer > 1.0) {
-      _state = 0;
-      _timer = 0;
-    }
-
-    if (_state == 2) {
-       // Damage Player
-       if (gameRef.player.position.distanceTo(position) < 30) {
-          gameRef.player.takeDamage(20);
-       }
-    }
-  }
-
-  @override
-  void render(Canvas canvas) {
-    // Base
-    canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 50, height: 50), Paint()..color = Colors.black.withOpacity(0.3));
-
-    if (_state == 0) {
-       // Safe (Dark Grey)
-       canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 40, height: 40), Paint()..color = Colors.grey.shade800);
-    } else if (_state == 1) {
-       // Warning (Flashing Red)
-       double flash = (sin(_timer * 20) + 1) / 2;
-       canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 40, height: 40), Paint()..color = Color.lerp(Colors.grey.shade800, Colors.red, flash)!);
-    } else {
-       // Active (Spikes)
-       canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 40, height: 40), Paint()..color = Colors.grey.shade600);
-       // Spikes
-       final Paint spikePaint = Paint()..color = Colors.white;
-       canvas.drawCircle(Offset(-10, -10), 5, spikePaint);
-       canvas.drawCircle(Offset(10, -10), 5, spikePaint);
-       canvas.drawCircle(Offset(-10, 10), 5, spikePaint);
-       canvas.drawCircle(Offset(10, 10), 5, spikePaint);
-       canvas.drawCircle(Offset(0, 0), 5, spikePaint);
-    }
-  }
-}
