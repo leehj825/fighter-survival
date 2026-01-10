@@ -791,7 +791,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     // Use Hurricane Effect instead of Sword
     final hurricane = HurricaneKickEffect();
-    hurricane.position = size / 2;
+    // Match visual offset of stickman (centered horizontally, shifted down 10px vertically)
+    hurricane.position = size / 2 + Vector2(0, 10);
     add(hurricane);
 
     // Play swoosh sound if available

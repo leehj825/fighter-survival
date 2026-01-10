@@ -40,9 +40,9 @@ class StickmanAnimator {
 
     // Determine Facing Angle
     if (speed > 10) {
-      // FIX: Adjusted offset to pi/2 (90 degrees) to fix Left/Right swap
+      // FIX: Adjusted offset to -pi/2 (-90 degrees) to fix Left/Right swap
       // Also ensure we are rotating correctly relative to the "Front" facing model
-      double targetAngle = atan2(velocity.y, velocity.x) + pi / 2;
+      double targetAngle = atan2(velocity.y, velocity.x) - pi / 2;
 
       double diff = targetAngle - _facingAngle;
       while (diff < -pi) diff += 2 * pi;
@@ -164,9 +164,16 @@ class StickmanAnimator {
     }
 
     // --- 3. GLOBAL ROTATION (Facing) ---
+    double renderAngle = _facingAngle;
+    if (isAttacking && attackType == AttackType.kick) {
+      // Whirlwind Spin: Spin 360 degrees during attack
+      double kickProgress = (_attackTimer / 0.3);
+      renderAngle += kickProgress * pi * 2;
+    }
+
     List<Vector3> allPoints = [hip, neck, lShoulder, rShoulder, lHip, rHip, lKnee, rKnee, lFoot, rFoot, lElbow, rElbow, lHand, rHand];
     for (var p in allPoints) {
-      _applyRotationY(p, _facingAngle);
+      _applyRotationY(p, renderAngle);
     }
 
     // --- 4. RENDER ---
