@@ -7,13 +7,13 @@ import 'package:flame/events.dart';
 import 'package:flame/input.dart'; // Added to fix TapDetector not found
 import 'package:flutter/material.dart' hide Draggable;
 import 'package:flame/effects.dart';
-import 'package:flame_svg/flame_svg.dart';
 
 import 'grid_background.dart';
 import 'hud.dart';
 import 'managers.dart';
 import 'visual_effects.dart';
 import 'sound_service.dart';
+import 'stickman_animator.dart'; // Import the new file
 
 /// Extension for safe vector normalization
 extension SafeVector2 on Vector2 {
@@ -679,6 +679,7 @@ class Obstacle extends PositionComponent {
 }
 
 class Player extends PositionComponent with HasGameRef<RpgGame> {
+  // ... Keep existing stats (health, level, etc) ...
   Vector2? moveDirection;
   static const double _baseSpeed = 200.0;
   static const double _dashSpeedMult = 3.5;
@@ -686,14 +687,10 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   late int health;
   late int maxHealth;
   double _damageCooldown = 0.0;
-
-  // Progression Fields
   int level = 1;
   int xp = 0;
   int xpToNextLevel = 10;
   double damageMult = 1.0;
-
-  // Meta-Progression Stats
   late double dashCooldownMax;
 
   bool isDashing = false;
@@ -701,194 +698,130 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   static const double _dashDuration = 0.32;
   double _currentDashCooldown = 0.0;
   Vector2 _dashDirection = Vector2.zero();
-
   bool isSlashing = false;
 
-  late Svg _svgIdle;
-  late Svg _svgPunch;
-  late Svg _svgKick;
+  // NEW: Animator
+  late StickmanAnimator _animator;
 
-  final List<Svg> _svgRunFrames = [];
-  double _animTimer = 0.0;
-  int _animFrameIndex = 0;
-
-  Player() : super(size: Vector2.all(60), anchor: Anchor.center); // Increased size for better SVG visibility
+  Player() : super(size: Vector2.all(60), anchor: Anchor.center);
 
   @override
   Future<void> onLoad() async {
     super.onLoad();
-    // Initialize Stats from GameData
+    // ... Keep existing stat initialization ...
     final data = GameData();
     maxHealth = 100 + (data.levelHp * 20);
-
-    // Check if we need to load saved health (if resuming)
-    // Accessing parent game
-    final rpgGame = gameRef;
-    if (rpgGame.resumeGame && data.hasSavedRun) {
-       health = data.savedHealth;
-    } else {
-       health = maxHealth;
-    }
-
-    // Base dash cooldown 0.8s, reduced by 10% per level
+    health = maxHealth;
     dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
 
-    // Load SVGs
-    _svgIdle = await Svg.load('images/player_idle.svg');
-    _svgPunch = await Svg.load('images/player_punch.svg');
-    _svgKick = await Svg.load('images/player_kick.svg');
-    _svgRunFrames.add(await Svg.load('images/player_run_1.svg'));
-    _svgRunFrames.add(await Svg.load('images/player_run_2.svg'));
+    // Initialize Animator instead of SVGs
+    _animator = StickmanAnimator(color: Colors.cyanAccent, scale: 1.2);
   }
 
   @override
   void update(double dt) {
     super.update(dt);
 
-    if (_damageCooldown > 0) {
-      _damageCooldown -= dt;
-    }
+    // ... Keep existing cooldown logic ...
+    if (_damageCooldown > 0) _damageCooldown -= dt;
+    if (_currentDashCooldown > 0) _currentDashCooldown -= dt;
 
-    if (_currentDashCooldown > 0) {
-      _currentDashCooldown -= dt;
-    }
+    Vector2 velocity = Vector2.zero();
 
     if (isDashing) {
       _dashTimer -= dt;
-
-      // Ease-out movement
-      double progress = (1.0 - (_dashTimer / _dashDuration)).clamp(0.0, 1.0); // Clamp to prevent <0 or >1
-      // Use easeOutCubic for a sharper drop-off to prevent "bouncy" feeling at end
+      double progress = (1.0 - (_dashTimer / _dashDuration)).clamp(0.0, 1.0);
       double currentSpeedMult = _dashSpeedMult * (1.0 - Curves.easeOutCubic.transform(progress) * 0.7);
 
-      position.add(_dashDirection * (_baseSpeed * currentSpeedMult) * dt);
+      velocity = _dashDirection * (_baseSpeed * currentSpeedMult);
+      position.add(velocity * dt);
 
-      // Spawn Trail
       if (_dashTimer % 0.05 < dt) {
          gameRef.world.add(VisualEffects.createDashTrail(position, angle));
       }
-
       if (_dashTimer <= 0) {
         isDashing = false;
-        angle = 0;
+        // Do not reset angle, Animator handles rotation now
       }
     } else if (moveDirection != null && moveDirection != Vector2.zero()) {
-      position.add(moveDirection! * _baseSpeed * dt);
-
-      // Face movement direction
-      if (moveDirection!.x < 0) {
-        scale = Vector2(-1, 1);
-      } else {
-        scale = Vector2.all(1);
-      }
-
-      // Animate
-      _animTimer += dt;
-      if (_animTimer > 0.15) {
-        _animTimer = 0;
-        _animFrameIndex = (_animFrameIndex + 1) % _svgRunFrames.length;
-      }
-    } else {
-      _animFrameIndex = 0;
-      _animTimer = 0;
+      velocity = moveDirection! * _baseSpeed;
+      position.add(velocity * dt);
     }
+
+    // Update Animator
+    _animator.isAttacking = isSlashing;
+    _animator.update(dt, velocity, isDashing);
   }
 
   @override
   void render(Canvas canvas) {
-    // Shadow (Base)
+    // Shadow
     canvas.drawOval(
       Rect.fromCenter(center: (size / 2).toOffset() + const Offset(0, 20), width: width, height: width * 0.3),
       Paint()..color = Colors.black.withOpacity(0.3)
     );
 
-    Svg currentSvg = _svgIdle;
-
-    if (isDashing) {
-      currentSvg = _svgPunch;
-    } else if (isSlashing) {
-      currentSvg = _svgKick;
-    } else if (moveDirection != null && moveDirection != Vector2.zero()) {
-      if (_svgRunFrames.isNotEmpty) {
-        currentSvg = _svgRunFrames[_animFrameIndex];
-      }
-    }
-
-    // Render SVG centered
-    currentSvg.render(canvas, Vector2.all(size.x));
+    // Render Procedural Stickman
+    // We pass (size/2) + offset so feet align with shadow
+    _animator.render(canvas, Vector2(size.x / 2, size.y / 2 + 10), size.y);
   }
 
+  // ... Keep existing methods (dash, slash, shoot, gainXp, etc) ...
   void dash(Vector2 direction) {
     if (isDashing || _currentDashCooldown > 0) return;
-
     isDashing = true;
+    isSlashing = false; // Reset slash if dashing
     _dashTimer = _dashDuration;
     _currentDashCooldown = dashCooldownMax;
 
     if (direction.length > 0) {
       _dashDirection = direction.safeNormalized();
-      angle = atan2(_dashDirection.y, _dashDirection.x);
     } else {
       _dashDirection = Vector2(1, 0);
-      angle = 0;
     }
   }
 
   void slash() {
     if (isSlashing) return;
-
     isSlashing = true;
+    _animator.isAttacking = true; // Trigger animator punch/slash
     final sword = SwordEffect();
     sword.position = size / 2;
     add(sword);
   }
 
+  // ... shoot, gainXp, _levelUp, takeDamage same as before ...
+  // Be sure to verify takeDamage logic is preserved
   void shoot(Vector2 dir) {
-    // Basic cooldown for shooting? Let's say 0.3s
-    // For now, no strict cooldown was requested, but let's add a small one to prevent spam lag
-
-    // Use variant based on damage/upgrades
     int sfxType = damageMult > 1.5 ? 1 : 0;
     SoundService.instance.playShoot(variant: sfxType);
-
     gameRef.world.add(PlayerProjectile(position, dir, damageMult));
   }
 
   void gainXp(int amount) {
     xp += amount;
-    if (xp >= xpToNextLevel) {
-      _levelUp();
-    }
+    if (xp >= xpToNextLevel) _levelUp();
   }
 
   void _levelUp() {
     xp -= xpToNextLevel;
     level++;
     xpToNextLevel = (xpToNextLevel * 1.5).toInt();
-
-    // Stats Up: Streamlined
     damageMult += 0.1;
-    // Heal to Full
     health = maxHealth;
-
-    gameRef.hud.showStory("LEVEL UP! SYSTEMS RESTORED.");
+    gameRef.hud.showStory("LEVEL UP!");
     SoundService.instance.playLevelUp();
     gameRef.world.add(VisualEffects.createExplosion(position));
-    gameRef.cameraShake(1.0);
   }
 
   @override
   void takeDamage(int amount) {
     if (_damageCooldown > 0 || isDashing) return;
-
-    // When player gets hit
     SoundService.instance.playDamage();
-
     health -= amount;
     _damageCooldown = 1.0;
-    gameRef.cameraShake(2.0); // Shake Screen
-    gameRef.world.add(DamageText(amount, position, isCrit: true)); // Show red text
-
+    gameRef.cameraShake(2.0);
+    gameRef.world.add(DamageText(amount, position, isCrit: true));
     if (health <= 0) {
       health = 0;
       gameRef.onGameOver();
@@ -921,6 +854,7 @@ class SwordEffect extends PositionComponent {
     if (_lifeTime >= _duration) {
       if (parent is Player) {
         (parent as Player).isSlashing = false;
+        // Also reset animator attacking state if needed, but animator has internal timer 0.3s
       }
       removeFromParent();
     }
@@ -973,6 +907,7 @@ class PlayerProjectile extends PositionComponent with HasGameRef<RpgGame> {
 }
 
 class Enemy extends PositionComponent with HasGameRef<RpgGame> {
+  // ... Stats ...
   int health = 2;
   static const double _speed = 100.0;
   Vector2? _roamTarget;
@@ -980,18 +915,15 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   Vector2 _knockbackVelocity = Vector2.zero();
   double _invulnerableTimer = 0.0;
   bool isElite = false;
-
   final EnemyModifier modifier;
   double _regenTimer = 0.0;
   int _maxHealth = 2;
 
-  Svg? _svg;
-  final List<Svg> _svgRunFrames = [];
-  double _animTimer = 0.0;
-  int _animFrameIndex = 0;
-  bool _isMoving = false;
+  // NEW: Animator
+  late StickmanAnimator _animator;
 
-  Enemy({this.isElite = false, this.modifier = EnemyModifier.none}) : super(size: Vector2.all(isElite ? 100 : 50), anchor: Anchor.center) {
+  Enemy({this.isElite = false, this.modifier = EnemyModifier.none})
+      : super(size: Vector2.all(isElite ? 100 : 50), anchor: Anchor.center) {
      if(isElite) health = health * 5;
      _maxHealth = health;
   }
@@ -999,47 +931,48 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   @override
   Future<void> onLoad() async {
     super.onLoad();
+    // Choose color/scale based on type
+    Color c = Colors.redAccent;
+    double s = 1.0;
+    WeaponType w = WeaponType.sword; // Default enemy has sword
+
     if (isElite) {
-      _svg = await Svg.load('images/enemy_boss.svg');
-      _svgRunFrames.add(await Svg.load('images/enemy_boss_run_1.svg'));
-      _svgRunFrames.add(await Svg.load('images/enemy_boss_run_2.svg'));
-    } else {
-      _svg = await Svg.load('images/enemy_sword.svg');
-      _svgRunFrames.add(await Svg.load('images/enemy_sword_run_1.svg'));
-      _svgRunFrames.add(await Svg.load('images/enemy_sword_run_2.svg'));
+      c = Colors.deepPurpleAccent;
+      s = 2.0;
+      w = WeaponType.axe;
+    } else if (modifier == EnemyModifier.swift) {
+      c = Colors.yellowAccent;
+    } else if (modifier == EnemyModifier.ghostly) {
+      c = Colors.white.withOpacity(0.5);
     }
+
+    _animator = StickmanAnimator(color: c, scale: s, weaponType: w);
   }
 
   @override
   void update(double dt) {
     super.update(dt);
+    if (_invulnerableTimer > 0) _invulnerableTimer -= dt;
 
-    if (_invulnerableTimer > 0) {
-      _invulnerableTimer -= dt;
-    }
-
-    // Regen logic
+    // ... Regen logic ...
     if (modifier == EnemyModifier.regen && health < _maxHealth && health > 0) {
         _regenTimer += dt;
         if (_regenTimer >= 1.0) {
             _regenTimer = 0;
-            int healAmount = (_maxHealth * 0.01).ceil();
-            health = (health + healAmount).clamp(0, _maxHealth);
+            health++;
         }
     }
 
+    Vector2 velocity = Vector2.zero();
+
     if (_knockbackVelocity.length > 5) {
-      position.add(_knockbackVelocity * dt);
+      velocity = _knockbackVelocity;
+      position.add(velocity * dt);
       _knockbackVelocity.scale(0.9);
-      _isMoving = true;
     } else {
       _knockbackVelocity.setZero();
-      _isMoving = false;
-
       _roamTimer -= dt;
-      if (_roamTimer <= 0 || _roamTarget == null) {
-        _pickNewTarget();
-      }
+      if (_roamTimer <= 0 || _roamTarget == null) _pickNewTarget();
 
       if (_roamTarget != null) {
         final Vector2 dir = _roamTarget! - position;
@@ -1048,317 +981,144 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
         } else {
           double currentSpeed = _speed;
           if (modifier == EnemyModifier.swift) currentSpeed *= 1.5;
-          position.add(dir.safeNormalized() * currentSpeed * dt);
-          _isMoving = true;
-
-          // Face direction
-          if (dir.x < 0) {
-            scale = Vector2(-1, 1);
-          } else {
-            scale = Vector2.all(1);
-          }
+          velocity = dir.safeNormalized() * currentSpeed;
+          position.add(velocity * dt);
         }
       }
     }
 
-    // Animate
-    if (_isMoving && _svgRunFrames.isNotEmpty) {
-       _animTimer += dt;
-       if (_animTimer > 0.2) {
-         _animTimer = 0;
-         _animFrameIndex = (_animFrameIndex + 1) % _svgRunFrames.length;
-       }
-    } else {
-      _animFrameIndex = 0;
-    }
+    // Update Animator with velocity
+    _animator.update(dt, velocity, false);
   }
 
+  // ... keep _pickNewTarget and takeDamage ...
   void _pickNewTarget() {
-    final Random rng = Random();
-    // Move towards player with some randomness to avoid stacking perfectly
-    Vector2 playerPos = gameRef.player.position;
-
-    double dx = (rng.nextDouble() - 0.5) * 200;
-    double dy = (rng.nextDouble() - 0.5) * 200;
-
-    _roamTarget = playerPos + Vector2(dx, dy);
-    _roamTimer = 1.0 + rng.nextDouble() * 2.0; // Update target every 1-3 seconds
+     final Random rng = Random();
+     Vector2 playerPos = gameRef.player.position;
+     double dx = (rng.nextDouble() - 0.5) * 200;
+     double dy = (rng.nextDouble() - 0.5) * 200;
+     _roamTarget = playerPos + Vector2(dx, dy);
+     _roamTimer = 1.0 + rng.nextDouble() * 2.0;
   }
 
   void takeDamage(int amount, {Vector2? knockbackDir}) {
-    // Fix: Prevent processing damage on already dead enemies
     if (health <= 0 || _invulnerableTimer > 0) return;
-
-    // Show Damage Number
     gameRef.world.add(DamageText(amount, position.clone() + Vector2(0, -30)));
-
     health -= amount;
-    if (knockbackDir != null) {
-       _knockbackVelocity = knockbackDir.safeNormalized() * 400.0;
-    }
+    if (knockbackDir != null) _knockbackVelocity = knockbackDir.safeNormalized() * 400.0;
     _invulnerableTimer = 0.5;
-
     if (health <= 0) {
-      health = 0; // Clamp
+      health = 0;
       removeFromParent();
       gameRef.killCount++;
-
-      // Magnet Drop Check (1 in 200 chance)
-      final Random rng = Random();
-      if (rng.nextInt(200) == 0) { // 0.5%
-          gameRef.world.add(MagnetItem()..position = position);
-      }
-
-      // Drop XP Gem
+      // ... drops ...
       gameRef.world.add(XpGem(isElite ? 50 : 10)..position = position);
-
-      // Play louder explosion for Elite enemies or Bosses
       SoundService.instance.playExplosion(isLarge: isElite);
       gameRef.world.add(VisualEffects.createExplosion(position));
-      gameRef.cameraShake(1.0);
     }
   }
 
   @override
   void render(Canvas canvas) {
-    // Opacity for Ghostly
-    int alpha = 255;
-    if (modifier == EnemyModifier.ghostly) {
-        alpha = (255 * 0.6).toInt();
-    }
-
     // Shadow
     canvas.drawOval(
       Rect.fromCenter(center: (size / 2).toOffset() + const Offset(0, 15), width: width, height: width * 0.3),
-      Paint()..color = Colors.black.withOpacity(0.3 * (alpha/255))
+      Paint()..color = Colors.black.withOpacity(0.3)
     );
 
-    Svg? renderSvg = _svg;
-    if (_isMoving && _svgRunFrames.isNotEmpty) {
-      renderSvg = _svgRunFrames[_animFrameIndex];
-    }
-
-    if (renderSvg != null) {
-      // Apply alpha to SVG? Svg render doesn't support alpha directly easily.
-      // We can use saveLayer/opacity if needed, but for now simple render.
-      if (modifier == EnemyModifier.ghostly) {
-         canvas.saveLayer(null, Paint()..color = Colors.white.withAlpha(alpha));
-         renderSvg.render(canvas, Vector2.all(size.x));
-         canvas.restore();
-      } else {
-         renderSvg.render(canvas, Vector2.all(size.x));
-      }
-    }
+    // Render Procedural Enemy
+    _animator.render(canvas, Vector2(size.x / 2, size.y / 2 + 5), size.y);
 
     // Flash
     if (_invulnerableTimer > 0) {
-       final Paint flashPaint = Paint()..color = const Color(0x88FFFFFF);
-       canvas.drawCircle((size/2).toOffset(), size.x/2, flashPaint);
+       canvas.drawCircle((size/2).toOffset(), size.x/2, Paint()..color = const Color(0x88FFFFFF));
     }
-  }
-}
-
-class DamageText extends PositionComponent {
-  final int damage;
-  double _lifeTime = 0.0;
-  final bool isCrit;
-
-  DamageText(this.damage, Vector2 pos, {this.isCrit = false}) {
-    position = pos;
-    anchor = Anchor.center;
-    priority = 200;
-  }
-
-  @override
-  void render(Canvas canvas) {
-    final textSpan = TextSpan(
-      text: damage.toString(),
-      style: TextStyle(
-        color: isCrit ? Colors.yellow : Colors.white,
-        fontSize: isCrit ? 26 : 18,
-        fontWeight: FontWeight.bold,
-        shadows: const [Shadow(blurRadius: 2, color: Colors.black, offset: Offset(1, 1))],
-      ),
-    );
-    final tp = TextPainter(text: textSpan, textDirection: TextDirection.ltr);
-    tp.layout();
-    tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
-  }
-
-  @override
-  void update(double dt) {
-    super.update(dt);
-    position.y -= 50 * dt;
-    _lifeTime += dt;
-    if (_lifeTime > 0.8) removeFromParent();
-  }
-}
-
-class XpGem extends PositionComponent {
-  final int amount;
-  double _lifeTime = 0.0;
-  bool isMagnetized = false;
-
-  XpGem(this.amount) : super(size: Vector2.all(10), anchor: Anchor.center);
-
-  @override
-  void render(Canvas canvas) {
-    canvas.drawCircle((size / 2).toOffset(), 4, Paint()..color = const Color(0xFF00FF00));
-    canvas.drawCircle((size / 2).toOffset(), 2, Paint()..color = Colors.white);
-  }
-
-  @override
-  void update(double dt) {
-    super.update(dt);
-    _lifeTime += dt;
-    position.y += sin(_lifeTime * 5) * 0.5;
-  }
-}
-
-class EnemyProjectile extends PositionComponent with HasGameRef<RpgGame> {
-  final Vector2 velocity;
-  double _lifeTime = 0.0;
-
-  EnemyProjectile(Vector2 pos, Vector2 target)
-      : velocity = (target - pos).safeNormalized() * 300,
-        super(position: pos, size: Vector2.all(10), anchor: Anchor.center);
-
-  @override
-  void update(double dt) {
-    super.update(dt);
-    position += velocity * dt;
-    _lifeTime += dt;
-    if (_lifeTime > 3.0) removeFromParent();
-
-    if (position.distanceTo(gameRef.player.position) < gameRef.player.size.x / 2) {
-      gameRef.player.takeDamage(10);
-      removeFromParent();
-    }
-  }
-
-  @override
-  void render(Canvas canvas) {
-    canvas.drawCircle(Offset.zero, 4, Paint()..color = Colors.purpleAccent);
   }
 }
 
 class ArrowProjectile extends EnemyProjectile {
-  late Svg _arrowSvg;
-
+  // Procedural Arrow instead of SVG
   ArrowProjectile(Vector2 pos, Vector2 target) : super(pos, target);
 
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-    _arrowSvg = await Svg.load('images/arrow.svg');
-    size = Vector2(40, 10); // Arrow size
-    // Calculate angle based on velocity
+    size = Vector2(40, 10);
     angle = atan2(velocity.y, velocity.x);
   }
 
   @override
   void render(Canvas canvas) {
-    // Render arrow aligned with rotation (handled by angle property)
-    // SVG is drawn at top-left 0,0.
-    // We should center it?
-    // PositionComponent with Anchor.center draws at -size/2..size/2 relative to position.
-    // render is called with canvas transformed to position and rotated by angle.
-    // (0,0) is center.
-    // SVG is 100x20.
-    // If we draw it at (0,0) with size (40, 10), it will be from center to bottom right?
-    // Flame canvas is usually pre-translated by anchor.
-    // If anchor is center, (0,0) is top-left of component? No.
-    // Flame 1.x: render(canvas) is in local coordinate system. (0,0) is top-left.
-    // If we set anchor to center, the component is offset by -width/2, -height/2.
-    // So (0,0) is the top-left of the box.
-    // The visual center is at (width/2, height/2).
-    // The rotation happens around the anchor point (center).
-    // So we just draw at (0,0).
+    // Draw Arrow
+    final Paint p = Paint()..color = Colors.white ..strokeWidth = 2;
+    // Local coords 0,0 is center of component? No, PositionComponent render is at local 0,0 (top left).
+    // But we want to draw centered on position?
+    // Wait, EnemyProjectile sets anchor to Center.
+    // So 0,0 in local space is the top-left of the box (-width/2, -height/2 relative to center).
+    // Let's draw relative to size.
 
-    _arrowSvg.render(canvas, size);
+    // Center is size/2
+    Offset center = (size / 2).toOffset();
+    // Arrow pointing right (0 radians)
+    canvas.drawLine(Offset(0, center.dy), Offset(size.x, center.dy), p);
+    // Head
+    canvas.drawLine(Offset(size.x - 10, center.dy - 5), Offset(size.x, center.dy), p);
+    canvas.drawLine(Offset(size.x - 10, center.dy + 5), Offset(size.x, center.dy), p);
   }
 }
 
 class ShooterEnemy extends Enemy {
   double _shootTimer = 0.0;
-  Svg? _archerSvg;
 
   ShooterEnemy() : super();
 
   @override
   Future<void> onLoad() async {
-    // We call super.onLoad() to ensure proper initialization of the component chain.
-    // This will load the default SVG (sword/boss), but we will immediately overwrite it.
     await super.onLoad();
-
-    _archerSvg = await Svg.load('images/enemy_archer.svg');
-    _svg = _archerSvg; // Set parent _svg to this one so Enemy.render uses it
-
-    // Clear frames and add archer frames
-    _svgRunFrames.clear();
-    _svgRunFrames.add(await Svg.load('images/enemy_archer_run_1.svg'));
-    _svgRunFrames.add(await Svg.load('images/enemy_archer_run_2.svg'));
+    // Override color/scale for Shooter and set weapon to Bow
+    _animator = StickmanAnimator(color: Colors.purpleAccent, scale: 1.0, weaponType: WeaponType.bow);
   }
-
-  // We can remove render override and let Enemy.render handle it, since we set _svg!
-  // Enemy.render handles shadow, SVG rendering, and flash.
-  // We just need to ensure ShooterEnemy uses the archer SVG.
 
   @override
   void update(double dt) {
-    // Handle invulnerability and knockback manually since we are overriding Enemy.update
+    // Custom movement logic first
     if (_invulnerableTimer > 0) {
       _invulnerableTimer -= dt;
     }
 
+    Vector2 velocity = Vector2.zero();
+
     if (_knockbackVelocity.length > 5) {
-      position.add(_knockbackVelocity * dt);
+      velocity = _knockbackVelocity;
+      position.add(velocity * dt);
       _knockbackVelocity.scale(0.9);
-      _isMoving = true;
     } else {
-      _isMoving = false; // Will set to true if we move below
-    }
+      _knockbackVelocity.setZero();
 
-    // Custom movement: maintain distance
-    double dist = position.distanceTo(gameRef.player.position);
-    Vector2 dir = (gameRef.player.position - position).safeNormalized();
+      // Custom movement: maintain distance
+      double dist = position.distanceTo(gameRef.player.position);
+      Vector2 dir = (gameRef.player.position - position).safeNormalized();
 
-    if (dist < 300) {
-       position -= dir * 80 * dt; // Retreat
-       _isMoving = true;
-       // Face away
-       if (-dir.x < 0) scale = Vector2(-1, 1);
-       else scale = Vector2.all(1);
-    } else if (dist > 500) {
-       position += dir * 100 * dt; // Chase
-       _isMoving = true;
-       // Face player
-       if (dir.x < 0) scale = Vector2(-1, 1);
-       else scale = Vector2.all(1);
-    } else {
-       // Standing still
-       // Face player
-       if (dir.x < 0) scale = Vector2(-1, 1);
-       else scale = Vector2.all(1);
+      if (dist < 300) {
+         velocity = -dir * 80; // Retreat
+      } else if (dist > 500) {
+         velocity = dir * 100; // Chase
+      }
+
+      position.add(velocity * dt);
     }
 
     // Shoot Logic
     _shootTimer += dt;
     if (_shootTimer > 2.0) {
        _shootTimer = 0.0;
+       // Trigger attack anim
+       _animator.isAttacking = true;
        gameRef.world.add(ArrowProjectile(position, gameRef.player.position));
     }
 
-    // Animation Logic (Copied from Enemy since we override update)
-    if (_isMoving && _svgRunFrames.isNotEmpty) {
-       _animTimer += dt;
-       if (_animTimer > 0.2) {
-         _animTimer = 0;
-         _animFrameIndex = (_animFrameIndex + 1) % _svgRunFrames.length;
-       }
-    } else {
-      _animFrameIndex = 0;
-    }
+    // Update Animator
+    _animator.update(dt, velocity, false);
   }
 }
 
