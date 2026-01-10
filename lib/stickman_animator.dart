@@ -54,7 +54,9 @@ class StickmanAnimator {
 
     // Determine Facing Angle
     if (speed > 10) {
-      double targetAngle = atan2(velocity.y, velocity.x) + pi / 2;
+      // Adjusted offset to -pi/2 (-90 degrees) to fix Left/Right swap
+      // Invert Y velocity to fix Up/Down swap
+      double targetAngle = atan2(-velocity.y, velocity.x) - pi / 2;
       double diff = targetAngle - _facingAngle;
       while (diff < -pi) diff += 2 * pi;
       while (diff > pi) diff -= 2 * pi;
