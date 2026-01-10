@@ -310,6 +310,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       // Randomly pick a modifier
       final modifier = EnemyModifier.values[rng.nextInt(EnemyModifier.values.length)];
       world.add(Enemy(isElite: true, modifier: modifier)..position = player.position + Vector2(600, 0));
+      hud.showBossWarning();
     }
   }
 
