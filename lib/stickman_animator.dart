@@ -11,7 +11,7 @@ class StickmanAnimator {
   final Color color;
   final double scale;
   final WeaponType weaponType;
-  final AttackType attackType;
+  AttackType attackType;
 
   // Animation State
   double _time = 0.0;
