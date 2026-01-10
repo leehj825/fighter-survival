@@ -7,6 +7,7 @@ import 'package:flame/events.dart';
 import 'package:flame/input.dart'; // Added to fix TapDetector not found
 import 'package:flutter/material.dart' hide Draggable;
 import 'package:flame/effects.dart';
+import 'package:flame_svg/flame_svg.dart';
 
 import 'grid_background.dart';
 import 'hud.dart';
@@ -703,10 +704,12 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
   bool isSlashing = false;
 
-  final Paint _cyanPaint = Paint()..color = const Color(0xFF00FFFF);
-  final Paint _yellowPaint = Paint()..color = const Color(0xFFFFFF00);
+  late Svg _svgIdle;
+  late Svg _svgRun;
+  late Svg _svgPunch;
+  late Svg _svgKick;
 
-  Player() : super(size: Vector2.all(40));
+  Player() : super(size: Vector2.all(60), anchor: Anchor.center); // Increased size for better SVG visibility
 
   @override
   Future<void> onLoad() async {
@@ -726,6 +729,12 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     // Base dash cooldown 0.8s, reduced by 10% per level
     dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
+
+    // Load SVGs
+    _svgIdle = await Svg.load('images/player_idle.svg');
+    _svgRun = await Svg.load('images/player_run.svg');
+    _svgPunch = await Svg.load('images/player_punch.svg');
+    _svgKick = await Svg.load('images/player_kick.svg');
   }
 
   @override
@@ -761,52 +770,51 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
       }
     } else if (moveDirection != null && moveDirection != Vector2.zero()) {
       position.add(moveDirection! * _baseSpeed * dt);
+
+      // Face movement direction
+      if (moveDirection!.x < 0) {
+        scale = Vector2(-1, 1);
+      } else {
+        scale = Vector2.all(1);
+      }
     }
   }
 
   @override
   void render(Canvas canvas) {
-    // 2.5D Rendering Constants
-    const double h = 15.0; // Height of the cylinder
-    final double r = width / 2;
-    final Offset center = (size / 2).toOffset();
-
     // Shadow (Base)
     canvas.drawOval(
-      Rect.fromCenter(center: center, width: width, height: width * 0.6),
+      Rect.fromCenter(center: (size / 2).toOffset() + const Offset(0, 20), width: width, height: width * 0.3),
       Paint()..color = Colors.black.withOpacity(0.3)
     );
 
+    Svg currentSvg = _svgIdle;
+
     if (isDashing) {
-      // Dash Visual: Triangle "Flying" low
-      final Path path = Path();
-      // Adjust points to account for height/offset
-      path.moveTo(width, (height / 2) - h/2);
-      path.lineTo(0, 0 - h/2);
-      path.lineTo(0, height - h/2);
-      path.close();
-      canvas.drawPath(path, _yellowPaint);
-    } else {
-      // Cylinder Body (Darker)
-      final Paint bodyPaint = Paint()..color = const Color(0xFF00AAAA); // Darker Cyan
-
-      final Offset topCenter = center + Offset(0, -h);
-
-      // Draw Body
-      final Path bodyPath = Path();
-      bodyPath.moveTo(center.dx - r, center.dy); // Bottom Left
-      bodyPath.lineTo(center.dx + r, center.dy); // Bottom Right
-      bodyPath.lineTo(topCenter.dx + r, topCenter.dy); // Top Right
-      bodyPath.lineTo(topCenter.dx - r, topCenter.dy); // Top Left
-      bodyPath.close();
-      canvas.drawPath(bodyPath, bodyPaint);
-
-      // Draw Top (Main Circle)
-      canvas.drawCircle(topCenter, r, _cyanPaint);
-
-      // Highlight/Rim (Optional)
-      canvas.drawCircle(topCenter, r, Paint()..style = PaintingStyle.stroke ..color = Colors.white.withOpacity(0.5) ..strokeWidth = 2);
+      currentSvg = _svgPunch;
+      // Rotate if dashing?
+      // SVGs are drawn normally, orientation handled by update/flip
+      if (_dashDirection.x < 0) {
+         // Flipped by scale in update? No, dash sets angle.
+         // But we should rely on flip for stickman, not rotation, usually.
+         // Stickman dash: Punch forward.
+         // If we rotate the whole component, the stickman rotates.
+         // Let's reset rotation and use scale for left/right facing.
+         // Actually `dash` method sets `angle`. We might want to disable that for stickman look
+         // or ensure the SVG is oriented top-down if we use angle.
+         // But stickman SVGs are side-view/front-view.
+      }
+    } else if (isSlashing) {
+      currentSvg = _svgKick;
+    } else if (moveDirection != null && moveDirection != Vector2.zero()) {
+      currentSvg = _svgRun;
     }
+
+    // Render SVG centered
+    currentSvg.render(canvas, Vector2.all(size.x), position: size / 2, anchor: Anchor.center);
+
+    // Debug bounds if needed
+    // canvas.drawRect(size.toRect(), Paint()..style=PaintingStyle.stroke..color=Colors.white);
   }
 
   void dash(Vector2 direction) {
@@ -976,11 +984,21 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   double _regenTimer = 0.0;
   int _maxHealth = 2;
 
-  final Paint _redPaint = Paint()..color = const Color(0xFFFF0000);
+  Svg? _svg;
 
-  Enemy({this.isElite = false, this.modifier = EnemyModifier.none}) : super(size: Vector2.all(isElite ? 80 : 40), anchor: Anchor.center) {
+  Enemy({this.isElite = false, this.modifier = EnemyModifier.none}) : super(size: Vector2.all(isElite ? 100 : 50), anchor: Anchor.center) {
      if(isElite) health = health * 5;
      _maxHealth = health;
+  }
+
+  @override
+  Future<void> onLoad() async {
+    super.onLoad();
+    if (isElite) {
+      _svg = await Svg.load('images/enemy_boss.svg');
+    } else {
+      _svg = await Svg.load('images/enemy_sword.svg');
+    }
   }
 
   @override
@@ -1073,11 +1091,6 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
   @override
   void render(Canvas canvas) {
-    // 2.5D Rendering
-    const double h = 15.0;
-    final double r = width / 2;
-    final Offset center = (size / 2).toOffset();
-
     // Opacity for Ghostly
     int alpha = 255;
     if (modifier == EnemyModifier.ghostly) {
@@ -1086,29 +1099,26 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
     // Shadow
     canvas.drawOval(
-      Rect.fromCenter(center: center, width: width, height: width * 0.6),
+      Rect.fromCenter(center: (size / 2).toOffset() + const Offset(0, 15), width: width, height: width * 0.3),
       Paint()..color = Colors.black.withOpacity(0.3 * (alpha/255))
     );
 
-    // Cylinder Body
-    final Paint bodyPaint = Paint()..color = const Color(0xFFAA0000).withAlpha(alpha); // Darker Red
-    final Offset topCenter = center + Offset(0, -h);
-
-    final Path bodyPath = Path();
-    bodyPath.moveTo(center.dx - r, center.dy);
-    bodyPath.lineTo(center.dx + r, center.dy);
-    bodyPath.lineTo(topCenter.dx + r, topCenter.dy);
-    bodyPath.lineTo(topCenter.dx - r, topCenter.dy);
-    bodyPath.close();
-    canvas.drawPath(bodyPath, bodyPaint);
-
-    // Top
-    canvas.drawCircle(topCenter, r, _redPaint..color = _redPaint.color.withAlpha(alpha));
+    if (_svg != null) {
+      // Apply alpha to SVG? Svg render doesn't support alpha directly easily.
+      // We can use saveLayer/opacity if needed, but for now simple render.
+      if (modifier == EnemyModifier.ghostly) {
+         canvas.saveLayer(null, Paint()..color = Colors.white.withAlpha(alpha));
+         _svg!.render(canvas, Vector2.all(size.x), position: size / 2, anchor: Anchor.center);
+         canvas.restore();
+      } else {
+         _svg!.render(canvas, Vector2.all(size.x), position: size / 2, anchor: Anchor.center);
+      }
+    }
 
     // Flash
     if (_invulnerableTimer > 0) {
        final Paint flashPaint = Paint()..color = const Color(0x88FFFFFF);
-       canvas.drawCircle(topCenter, r, flashPaint);
+       canvas.drawCircle((size/2).toOffset(), size.x/2, flashPaint);
     }
   }
 }
@@ -1199,27 +1209,28 @@ class EnemyProjectile extends PositionComponent with HasGameRef<RpgGame> {
 
 class ShooterEnemy extends Enemy {
   double _shootTimer = 0.0;
+  Svg? _archerSvg;
 
   ShooterEnemy() : super();
 
   @override
-  void render(Canvas canvas) {
-     final Path path = Path();
-     path.moveTo(0, -20);
-     path.lineTo(20, 20);
-     path.lineTo(-20, 20);
-     path.close();
-     canvas.drawPath(path, Paint()..color = Colors.purpleAccent);
+  Future<void> onLoad() async {
+    // Override default Enemy onLoad to load archer SVG specifically
+    // We avoid calling super.onLoad() to prevent loading the default sword/boss SVG.
+    // Enemy.onLoad only loads SVGs, so skipping it is safe and more efficient.
 
-     // Add a shadow or highlight to match style
-     canvas.drawPath(path, Paint()..style=PaintingStyle.stroke..color=Colors.white.withOpacity(0.5));
+    // Call PositionComponent.onLoad via super.super?? No, just don't call super.onLoad
+    // if super is Enemy and Enemy.onLoad is what we want to skip.
+    // But we should ensure we don't miss anything from PositionComponent.onLoad (which is empty usually).
+    // Let's just load our SVG.
 
-     // Flash
-    if (_invulnerableTimer > 0) {
-       final Paint flashPaint = Paint()..color = const Color(0x88FFFFFF);
-       canvas.drawCircle(Offset.zero, 20, flashPaint); // Simple circle flash for shooter
-    }
+    _archerSvg = await Svg.load('images/enemy_archer.svg');
+    _svg = _archerSvg; // Set parent _svg to this one so Enemy.render uses it
   }
+
+  // We can remove render override and let Enemy.render handle it, since we set _svg!
+  // Enemy.render handles shadow, SVG rendering, and flash.
+  // We just need to ensure ShooterEnemy uses the archer SVG.
 
   @override
   void update(double dt) {

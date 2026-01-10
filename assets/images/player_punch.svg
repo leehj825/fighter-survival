@@ -1,0 +1,11 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="60" cy="25" r="10" stroke="yellow" stroke-width="4" fill="none"/>
+  <line x1="60" y1="35" x2="40" y2="60" stroke="yellow" stroke-width="4"/>
+  <!-- Legs Flying back -->
+  <line x1="40" y1="60" x2="10" y2="70" stroke="yellow" stroke-width="4"/>
+  <line x1="40" y1="60" x2="15" y2="50" stroke="yellow" stroke-width="4"/>
+  <!-- Punch Arm -->
+  <line x1="50" y1="45" x2="90" y2="35" stroke="yellow" stroke-width="4"/>
+  <!-- Other Arm -->
+  <line x1="50" y1="45" x2="40" y2="30" stroke="yellow" stroke-width="4"/>
+</svg>
