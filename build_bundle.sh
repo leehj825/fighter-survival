@@ -1,0 +1,1 @@
+   flutter build appbundle --release --dart-define=BUILD_TYPE=bundle
