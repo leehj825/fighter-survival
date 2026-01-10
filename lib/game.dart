@@ -1036,6 +1036,90 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   }
 }
 
+class DamageText extends PositionComponent {
+  final int damage;
+  double _lifeTime = 0.0;
+  final bool isCrit;
+
+  DamageText(this.damage, Vector2 pos, {this.isCrit = false}) {
+    position = pos;
+    anchor = Anchor.center;
+    priority = 200;
+  }
+
+  @override
+  void render(Canvas canvas) {
+    final textSpan = TextSpan(
+      text: damage.toString(),
+      style: TextStyle(
+        color: isCrit ? Colors.yellow : Colors.white,
+        fontSize: isCrit ? 26 : 18,
+        fontWeight: FontWeight.bold,
+        shadows: const [Shadow(blurRadius: 2, color: Colors.black, offset: Offset(1, 1))],
+      ),
+    );
+    final tp = TextPainter(text: textSpan, textDirection: TextDirection.ltr);
+    tp.layout();
+    tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    position.y -= 50 * dt;
+    _lifeTime += dt;
+    if (_lifeTime > 0.8) removeFromParent();
+  }
+}
+
+class XpGem extends PositionComponent {
+  final int amount;
+  double _lifeTime = 0.0;
+  bool isMagnetized = false;
+
+  XpGem(this.amount) : super(size: Vector2.all(10), anchor: Anchor.center);
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawCircle((size / 2).toOffset(), 4, Paint()..color = const Color(0xFF00FF00));
+    canvas.drawCircle((size / 2).toOffset(), 2, Paint()..color = Colors.white);
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _lifeTime += dt;
+    position.y += sin(_lifeTime * 5) * 0.5;
+  }
+}
+
+class EnemyProjectile extends PositionComponent with HasGameRef<RpgGame> {
+  final Vector2 velocity;
+  double _lifeTime = 0.0;
+
+  EnemyProjectile(Vector2 pos, Vector2 target)
+      : velocity = (target - pos).safeNormalized() * 300,
+        super(position: pos, size: Vector2.all(10), anchor: Anchor.center);
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    position += velocity * dt;
+    _lifeTime += dt;
+    if (_lifeTime > 3.0) removeFromParent();
+
+    if (position.distanceTo(gameRef.player.position) < gameRef.player.size.x / 2) {
+      gameRef.player.takeDamage(10);
+      removeFromParent();
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawCircle(Offset.zero, 4, Paint()..color = Colors.purpleAccent);
+  }
+}
+
 class ArrowProjectile extends EnemyProjectile {
   // Procedural Arrow instead of SVG
   ArrowProjectile(Vector2 pos, Vector2 target) : super(pos, target);
@@ -1123,209 +1207,3 @@ class ShooterEnemy extends Enemy {
 }
 
 enum EnemyModifier { none, swift, ghostly, regen }
-
-class Barrel extends PositionComponent with HasGameRef<RpgGame> {
-  int hp = 1;
-  final double radius = 25;
-  final double height = 40;
-
-  Barrel() : super(anchor: Anchor.center, size: Vector2.all(50));
-
-  @override
-  void render(Canvas canvas) {
-    // Red cylinder with danger marking
-    final Offset center = (size / 2).toOffset();
-    final double r = radius;
-    final double h = height;
-
-    // Shadow
-    canvas.drawOval(
-      Rect.fromCenter(center: center, width: width, height: width * 0.6),
-      Paint()..color = Colors.black.withOpacity(0.3)
-    );
-
-    // Body
-    final Offset topCenter = center + Offset(0, -h);
-    final Path bodyPath = Path();
-    bodyPath.moveTo(center.dx - r, center.dy);
-    bodyPath.lineTo(center.dx + r, center.dy);
-    bodyPath.lineTo(topCenter.dx + r, topCenter.dy);
-    bodyPath.lineTo(topCenter.dx - r, topCenter.dy);
-    bodyPath.close();
-    canvas.drawPath(bodyPath, Paint()..color = Colors.red.shade900);
-
-    // Top
-    canvas.drawCircle(topCenter, r, Paint()..color = Colors.red.shade700);
-
-    // Danger Marking (Yellow X on top)
-    final Paint markPaint = Paint()..color = Colors.yellow..strokeWidth = 4.0..style = PaintingStyle.stroke;
-    canvas.drawLine(topCenter + Offset(-10, -10), topCenter + Offset(10, 10), markPaint);
-    canvas.drawLine(topCenter + Offset(10, -10), topCenter + Offset(-10, 10), markPaint);
-
-    // Rim
-    canvas.drawCircle(topCenter, r, Paint()..style = PaintingStyle.stroke ..color = Colors.white.withOpacity(0.3));
-  }
-
-  void takeDamage() {
-     if (hp <= 0) return;
-     hp--;
-     if (hp <= 0) _explode();
-  }
-
-  void _explode() {
-    removeFromParent();
-    gameRef.world.add(VisualEffects.createExplosion(position, scale: 3.0));
-
-    // Deal damage
-    // Find entities in radius 150
-    for(final child in gameRef.world.children) {
-         if (child is Enemy) {
-             if (child.position.distanceTo(position) < 150) {
-                 child.takeDamage(500, knockbackDir: child.position - position);
-             }
-         } else if (child is Player) {
-              if (child.position.distanceTo(position) < 150) {
-                  child.takeDamage(500); // Massive damage
-              }
-         }
-    }
-    gameRef.cameraShake(5.0);
-  }
-}
-
-class MagnetItem extends PositionComponent with HasGameRef<RpgGame> {
-  late TextPainter _tp;
-
-  MagnetItem() : super(anchor: Anchor.center, size: Vector2.all(30));
-
-  @override
-  Future<void> onLoad() async {
-    const TextSpan span = TextSpan(
-        text: "M",
-        style: TextStyle(
-            color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold));
-    _tp = TextPainter(text: span, textDirection: TextDirection.ltr);
-    _tp.layout();
-  }
-
-  @override
-  void render(Canvas canvas) {
-    final double w = width;
-    final double h = height;
-
-    // Simple Square Icon with 'M'
-    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()..color = Colors.white);
-    canvas.drawRect(
-        Rect.fromLTWH(2, 2, w - 4, h - 4), Paint()..color = Colors.blue);
-
-    _tp.paint(canvas, Offset((w - _tp.width) / 2, (h - _tp.height) / 2));
-  }
-}
-
-class OrbitalShield extends PositionComponent with HasGameRef<RpgGame> {
-  final Player _player;
-  double _angle = 0.0;
-  final double _orbitRadius = 80.0;
-  late double _orbitSpeed;
-  late int _damage;
-
-  OrbitalShield(this._player) : super(size: Vector2.all(20), anchor: Anchor.center);
-
-  @override
-  Future<void> onLoad() async {
-     super.onLoad();
-     final int level = GameData().levelShield;
-     // Base speed 2.0, +0.5 per level beyond 1
-     _orbitSpeed = 2.0 + (level - 1) * 0.5;
-     // Base damage 10, +5 per level beyond 1
-     _damage = 10 + (level - 1) * 5;
-  }
-
-  @override
-  void update(double dt) {
-    super.update(dt);
-    if (_player.isRemoved) {
-      removeFromParent();
-      return;
-    }
-
-    _angle += _orbitSpeed * dt;
-    position = _player.position + Vector2(cos(_angle), sin(_angle)) * _orbitRadius;
-
-    // Collision Logic
-    for (final child in gameRef.world.children) {
-      if (child is Enemy) {
-        if (child.position.distanceTo(position) < (child.size.x / 2 + size.x / 2)) {
-           child.takeDamage(_damage, knockbackDir: child.position - _player.position);
-        }
-      } else if (child is EnemyProjectile) {
-        if (child.position.distanceTo(position) < (child.size.x / 2 + size.x / 2)) {
-           child.removeFromParent(); // Block projectile
-        }
-      }
-    }
-  }
-
-  @override
-  void render(Canvas canvas) {
-    canvas.drawCircle(Offset.zero, 8, Paint()..color = Colors.cyanAccent.withOpacity(0.8));
-    canvas.drawCircle(Offset.zero, 10, Paint()..style=PaintingStyle.stroke ..color = Colors.white.withOpacity(0.5) ..strokeWidth=2);
-  }
-}
-
-class SpikeTrap extends PositionComponent with HasGameRef<RpgGame> {
-  double _timer = 0.0;
-  int _state = 0; // 0: Safe, 1: Warning, 2: Active
-
-  SpikeTrap() : super(anchor: Anchor.center, size: Vector2.all(60));
-
-  @override
-  void update(double dt) {
-    super.update(dt);
-    _timer += dt;
-
-    // Cycle: 2s Safe -> 1s Warning -> 1s Active
-    if (_state == 0 && _timer > 2.0) {
-      _state = 1;
-      _timer = 0;
-    } else if (_state == 1 && _timer > 1.0) {
-      _state = 2;
-      _timer = 0;
-    } else if (_state == 2 && _timer > 1.0) {
-      _state = 0;
-      _timer = 0;
-    }
-
-    if (_state == 2) {
-       // Damage Player
-       if (gameRef.player.position.distanceTo(position) < 30) {
-          gameRef.player.takeDamage(20);
-       }
-    }
-  }
-
-  @override
-  void render(Canvas canvas) {
-    // Base
-    canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 50, height: 50), Paint()..color = Colors.black.withOpacity(0.3));
-
-    if (_state == 0) {
-       // Safe (Dark Grey)
-       canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 40, height: 40), Paint()..color = Colors.grey.shade800);
-    } else if (_state == 1) {
-       // Warning (Flashing Red)
-       double flash = (sin(_timer * 20) + 1) / 2;
-       canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 40, height: 40), Paint()..color = Color.lerp(Colors.grey.shade800, Colors.red, flash)!);
-    } else {
-       // Active (Spikes)
-       canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: 40, height: 40), Paint()..color = Colors.grey.shade600);
-       // Spikes
-       final Paint spikePaint = Paint()..color = Colors.white;
-       canvas.drawCircle(Offset(-10, -10), 5, spikePaint);
-       canvas.drawCircle(Offset(10, -10), 5, spikePaint);
-       canvas.drawCircle(Offset(-10, 10), 5, spikePaint);
-       canvas.drawCircle(Offset(10, 10), 5, spikePaint);
-       canvas.drawCircle(Offset(0, 0), 5, spikePaint);
-    }
-  }
-}
