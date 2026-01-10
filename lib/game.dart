@@ -715,7 +715,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
 
     // Initialize Animator instead of SVGs
-    _animator = StickmanAnimator(color: Colors.cyanAccent, scale: 1.2);
+    // Set Animator to use Kick by default for attacks
+    _animator = StickmanAnimator(color: Colors.cyanAccent, scale: 1.2, attackType: AttackType.kick);
   }
 
   @override
@@ -763,7 +764,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     // Render Procedural Stickman
     // We pass (size/2) + offset so feet align with shadow
-    _animator.render(canvas, Vector2(size.x / 2, size.y / 2 + 10), size.y);
+    // Pass isDashing to render for the Punch pose
+    _animator.render(canvas, Vector2(size.x / 2, size.y / 2 + 10), size.y, isDashing: isDashing);
   }
 
   // ... Keep existing methods (dash, slash, shoot, gainXp, etc) ...
@@ -782,12 +784,18 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   }
 
   void slash() {
-    if (isSlashing) return;
+    if (isSlashing || isDashing) return;
     isSlashing = true;
-    _animator.isAttacking = true; // Trigger animator punch/slash
-    final sword = SwordEffect();
-    sword.position = size / 2;
-    add(sword);
+    _animator.isAttacking = true;
+    _animator.attackType = AttackType.kick; // Ensure it kicks
+
+    // Use Hurricane Effect instead of Sword
+    final hurricane = HurricaneKickEffect();
+    hurricane.position = size / 2;
+    add(hurricane);
+
+    // Play swoosh sound if available
+    // SoundService.instance.playSwoosh();
   }
 
   // ... shoot, gainXp, _levelUp, takeDamage same as before ...
@@ -1332,5 +1340,52 @@ class MagnetItem extends PositionComponent {
      Paint tip = Paint()..color = Colors.grey.shade300;
      canvas.drawRect(Rect.fromLTWH(5, 15, 6, 6), tip);
      canvas.drawRect(Rect.fromLTWH(19, 15, 6, 6), tip);
+  }
+}
+
+class HurricaneKickEffect extends PositionComponent {
+  double _lifeTime = 0.0;
+  static const double _duration = 0.3;
+  final Paint _paint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 3.0
+    ..strokeCap = StrokeCap.round;
+
+  HurricaneKickEffect() : super(anchor: Anchor.center, size: Vector2.all(100)); // Larger area
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _lifeTime += dt;
+    if (_lifeTime >= _duration) {
+      if (parent is Player) {
+        (parent as Player).isSlashing = false;
+      }
+      removeFromParent();
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    // Draw a spinning "hurricane" spiral
+    double progress = _lifeTime / _duration;
+    double opacity = (1.0 - progress).clamp(0.0, 1.0);
+    _paint.color = Colors.cyanAccent.withOpacity(opacity);
+
+    canvas.save();
+    canvas.rotate(progress * pi * 4); // Fast spin
+
+    // Draw spiral lines
+    for(int i=0; i<3; i++) {
+       canvas.drawArc(
+         Rect.fromCircle(center: Offset.zero, radius: 40 + (i * 5) + (progress * 20)),
+         (i * 2.0),
+         2.0,
+         false,
+         _paint
+       );
+    }
+
+    canvas.restore();
   }
 }
