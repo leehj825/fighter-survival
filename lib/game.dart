@@ -811,7 +811,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     }
 
     // Render SVG centered
-    currentSvg.render(canvas, Vector2.all(size.x), position: size / 2, anchor: Anchor.center);
+    currentSvg.render(canvas, Vector2.all(size.x));
 
     // Debug bounds if needed
     // canvas.drawRect(size.toRect(), Paint()..style=PaintingStyle.stroke..color=Colors.white);
@@ -1108,10 +1108,10 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       // We can use saveLayer/opacity if needed, but for now simple render.
       if (modifier == EnemyModifier.ghostly) {
          canvas.saveLayer(null, Paint()..color = Colors.white.withAlpha(alpha));
-         _svg!.render(canvas, Vector2.all(size.x), position: size / 2, anchor: Anchor.center);
+         _svg!.render(canvas, Vector2.all(size.x));
          canvas.restore();
       } else {
-         _svg!.render(canvas, Vector2.all(size.x), position: size / 2, anchor: Anchor.center);
+         _svg!.render(canvas, Vector2.all(size.x));
       }
     }
 
