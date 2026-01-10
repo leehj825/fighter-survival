@@ -96,7 +96,7 @@ class StickmanAnimator {
 
     // LEAN FORWARD (Running/Dashing)
     if (_runWeight > 0.1 || _wasDashing) {
-       double leanAmount = 0.4 * _runWeight;
+       double leanAmount = 0.15 * _runWeight;
        if (_wasDashing) leanAmount = 0.9; // Deep lean for dash
 
        double ny = neck.y * cos(leanAmount) - neck.z * sin(leanAmount);
@@ -139,13 +139,11 @@ class StickmanAnimator {
 
     // Kick Override
     if (isAttacking && (attackType == AttackType.kick || weaponType == WeaponType.none)) {
-        double kickProgress = (_attackTimer / 0.3);
-        double ka = kickProgress * pi * 2;
-
-        // Shorter Leg Calculation
-        // Using length ~10-12 instead of 15+ to keep it proportional
-        rKnee = rHip + Vector3(cos(ka)*8, 4, sin(ka)*8);
-        rFoot = rKnee + Vector3(cos(ka)*10, 4, sin(ka)*10);
+        // Fixed leg pose relative to spinning body
+        // High kick pose (lower Y value = higher up)
+        // Leg extended to the side/front in local space
+        rKnee = rHip + Vector3(10, -5, 5);
+        rFoot = rKnee + Vector3(12, -2, 2);
     }
 
     // ARMS (Triangular \/ )
