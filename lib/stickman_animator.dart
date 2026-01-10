@@ -3,13 +3,15 @@ import 'dart:ui';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
-enum AttackType { punch, kick, bow, sword, axe } // Added sword/axe back to support existing Enemy logic if needed, though user provided enum only had punch, kick, bow. Let's check if I need to keep sword/axe.
+enum WeaponType { none, sword, axe, bow }
+enum AttackType { punch, kick, bow, sword, axe }
 
 /// A class that procedurally animates a stickman in pseudo-3D
 class StickmanAnimator {
   final Color color;
   final double scale;
-  final WeaponType weaponType; // Added to support existing Enemy logic
+  final WeaponType weaponType;
+  final AttackType attackType;
 
   // Animation State
   double _time = 0.0;
@@ -20,14 +22,13 @@ class StickmanAnimator {
 
   // Actions
   bool isAttacking = false;
-  AttackType attackType = AttackType.punch; // Default
   double _attackTimer = 0.0;
 
   StickmanAnimator({
     this.color = Colors.white,
     this.scale = 1.0,
+    this.weaponType = WeaponType.none,
     this.attackType = AttackType.punch,
-    this.weaponType = WeaponType.sword // Default to sword to match existing Enemy constructor
   });
 
   void update(double dt, Vector2 velocity, bool isDashing) {
@@ -40,8 +41,7 @@ class StickmanAnimator {
 
     // Determine Facing Angle
     if (speed > 10) {
-      // FIX: Adjusted offset to -pi/2 (-90 degrees) to fix Left/Right swap
-      // Also ensure we are rotating correctly relative to the "Front" facing model
+      // Adjusted offset to -pi/2 (-90 degrees) to fix Left/Right swap
       // Invert Y velocity to fix Up/Down swap
       double targetAngle = atan2(-velocity.y, velocity.x) - pi / 2;
 
@@ -53,7 +53,7 @@ class StickmanAnimator {
 
     if (isAttacking) {
       _attackTimer += dt;
-      if (_attackTimer > 0.3) { // Attack duration
+      if (_attackTimer > 0.3) {
         isAttacking = false;
         _attackTimer = 0.0;
       }
@@ -74,17 +74,15 @@ class StickmanAnimator {
     final Paint fillPaint = Paint()..color = color..style = PaintingStyle.fill;
 
     // --- 1. BASE SKELETON (Local Space) ---
-    // Model faces "Front" (Z+)
     Vector3 hip = Vector3(0, 0, 0);
     Vector3 neck = Vector3(0, -25, 0);
 
     // Breathing / Bobbing
     double breath = sin(_time * 0.5) * 1.0;
     neck.y += breath * (1 - _runWeight);
-    neck.y += sin(_time).abs() * 3.0 * _runWeight;
+    neck.y += sin(_time).abs() * 3.0 * _runWeight; // Fixed abs()
 
     // Lean Forward Logic (Pitch Spine Forward)
-    // Rotate neck around X axis relative to hip
     if (_runWeight > 0.1 || isDashing) {
        double leanAmount = 0.2 * _runWeight; // Reduced Lean forward
        if (isDashing) leanAmount = 0.4; // Lean more when dashing
@@ -96,14 +94,15 @@ class StickmanAnimator {
        neck.z = nz;
     }
 
-    // Shoulders & Hips
-    Vector3 lShoulder = Vector3(-8, neck.y, neck.z); // Attach to neck position
-    Vector3 rShoulder = Vector3(8, neck.y, neck.z);
+    // Shoulders (Centered at Neck for Triangular shape)
+    Vector3 lShoulder = Vector3(0, neck.y, neck.z);
+    Vector3 rShoulder = Vector3(0, neck.y, neck.z);
 
-    Vector3 lHip = Vector3(-4, 0, 0);
-    Vector3 rHip = Vector3(4, 0, 0);
+    // Hips (Centered)
+    Vector3 lHip = Vector3(0, 0, 0);
+    Vector3 rHip = Vector3(0, 0, 0);
 
-    // --- 2. ANIMATE LIMBS ---
+    // --- 2. LIMB ANIMATION ---
     double legSwing = sin(_time) * 0.8 * _runWeight;
     double armSwing = cos(_time) * 0.8 * _runWeight;
 
@@ -113,51 +112,77 @@ class StickmanAnimator {
        armSwing = 0.0;
     }
 
-    // LEGS
-    Vector3 lKnee = _rotateX(Vector3(0, 12, 0), legSwing) + lHip;
-    Vector3 rKnee = _rotateX(Vector3(0, 12, 0), -legSwing) + rHip;
-    Vector3 lFoot = _rotateX(Vector3(0, 12, 0), legSwing + 0.2) + lKnee;
-    Vector3 rFoot = _rotateX(Vector3(0, 12, 0), -legSwing + 0.2) + rKnee;
+    // LEGS (Triangular /\ )
+    // Offset X by -3/3 to make them flare out from center
+    Vector3 lKnee = _rotateX(Vector3(-3, 12, 0), legSwing) + lHip;
+    Vector3 rKnee = _rotateX(Vector3(3, 12, 0), -legSwing) + rHip;
+    Vector3 lFoot = _rotateX(Vector3(-3, 12, 0), legSwing + 0.2) + lKnee;
+    Vector3 rFoot = _rotateX(Vector3(3, 12, 0), -legSwing + 0.2) + rKnee;
 
-    // ARMS
+    // ARMS (Triangular \/ )
     double lArmAngle = -armSwing;
     double rArmAngle = armSwing;
-    double rElbowBend = -0.3; // Slight natural bend
+    double rElbowBend = 0.0; // Default straight
+
+    // Attack/Weapon Poses
+    if (isAttacking) {
+        // Default attack pose (will be overridden by Kick/Dash)
+        if (attackType != AttackType.kick) rArmAngle = -1.5;
+    }
+
+    if (weaponType == WeaponType.bow) {
+       lArmAngle = -1.5;
+       rArmAngle = -1.5;
+    } else if (weaponType != WeaponType.none && !isAttacking) {
+       rArmAngle = -0.5;
+    }
 
     // -- DASH PUNCH LOGIC --
     if (isDashing) {
        // Left arm tucked back
        lArmAngle = 0.5;
-
-       // Right arm PUNCH (Forward Z)
-       // Quick retraction then punch? Just hold punch pose for dash duration
+       // Right arm PUNCH
        rArmAngle = -1.5; // Raise arm
        rElbowBend = 0.0; // Straighten
-
-       // We'll calculate positions and then override the Z depth for the punch
-    }
-    // -- ROUND KICK LOGIC --
-    else if (isAttacking && attackType == AttackType.kick) {
-       // Override Right Leg: Hold extended position while body spins
-       // Extended Side/Forward, Lifted
-       rKnee = rHip + Vector3(20, -10, 10);
-       rFoot = rKnee + Vector3(15, 0, 5);
     }
 
-    // Calculate Arm Joints
-    Vector3 lElbow = _rotateX(Vector3(0, 10, 0), lArmAngle) + lShoulder;
-    Vector3 rElbow = _rotateX(Vector3(0, 10, 0), rArmAngle) + rShoulder;
+    // Offset X by -6/6 to make arms flare out from neck
+    Vector3 lElbow = _rotateX(Vector3(-6, 10, 0), lArmAngle) + lShoulder;
+    Vector3 rElbow = _rotateX(Vector3(6, 10, 0), rArmAngle) + rShoulder;
 
     Vector3 lHand = _rotateX(Vector3(0, 10, 0), lArmAngle - 0.3) + lElbow;
-    Vector3 rHand = _rotateX(Vector3(0, 10, 0), rArmAngle + rElbowBend) + rElbow;
+    Vector3 rHand = _rotateX(Vector3(0, 10, 0), rArmAngle + rElbowBend) + rElbow; // Added rElbowBend usage
+
+    // Attack Animation Extensions
+    if (isAttacking && attackType != AttackType.kick) {
+       double punchProgress = sin((_attackTimer / 0.3) * pi);
+       if (weaponType == WeaponType.none) {
+          rHand.z += punchProgress * 15;
+          rHand.y -= punchProgress * 5;
+       } else {
+          rHand.y += punchProgress * 10;
+          rHand.z += punchProgress * 10;
+       }
+    }
 
     // Apply Dash Punch Extension
     if (isDashing) {
        rHand.z += 20; // Punch FORWARD relative to body
-       rHand.x = rShoulder.x; // Center the punch
+       // rHand.x = rShoulder.x; // Keep triangular offset or center it?
+       // Triangular style implies hands might meet in middle or punch straight.
+       // Let's keep the vector math consistent.
     }
 
-    // --- 3. GLOBAL ROTATION (Facing) ---
+    // -- ROUND KICK LOGIC --
+    if (isAttacking && attackType == AttackType.kick) {
+       // Override Right Leg: Hold extended position while body spins
+       // Extended Side/Forward, Lifted
+       // We override the previously calculated knee/foot
+       rKnee = rHip + Vector3(20, -10, 10);
+       rFoot = rKnee + Vector3(15, 0, 5);
+    }
+
+    // --- 3. GLOBAL ROTATION ---
     double renderAngle = _facingAngle;
     if (isAttacking && attackType == AttackType.kick) {
       // Whirlwind Spin: Spin 360 degrees during attack
@@ -170,49 +195,59 @@ class StickmanAnimator {
       _applyRotationY(p, renderAngle);
     }
 
-    // --- 4. RENDER ---
+    // --- 4. RENDER TO 2D ---
     Offset toScreen(Vector3 v) => Offset(v.x, v.y + (v.z * 0.3));
 
-    // Body
+    // Draw Spine
     canvas.drawLine(toScreen(hip), toScreen(neck), paint);
-    canvas.drawLine(toScreen(neck), toScreen(lShoulder), paint);
-    canvas.drawLine(toScreen(neck), toScreen(rShoulder), paint);
-    canvas.drawLine(toScreen(hip), toScreen(lHip), paint);
-    canvas.drawLine(toScreen(hip), toScreen(rHip), paint);
 
-    // Legs
+    // Draw Legs (Connected to Hip)
     canvas.drawLine(toScreen(lHip), toScreen(lKnee), paint);
     canvas.drawLine(toScreen(lKnee), toScreen(lFoot), paint);
     canvas.drawLine(toScreen(rHip), toScreen(rKnee), paint);
     canvas.drawLine(toScreen(rKnee), toScreen(rFoot), paint);
 
-    // Arms
+    // Draw Arms (Connected to Neck/Shoulder)
     canvas.drawLine(toScreen(lShoulder), toScreen(lElbow), paint);
     canvas.drawLine(toScreen(lElbow), toScreen(lHand), paint);
     canvas.drawLine(toScreen(rShoulder), toScreen(rElbow), paint);
     canvas.drawLine(toScreen(rElbow), toScreen(rHand), paint);
 
-    // Head
+    // Draw Head
     Offset headCenter = toScreen(neck + Vector3(0, -8, 0));
     canvas.drawCircle(headCenter, 6, fillPaint);
 
-    // Draw Weapon (if not punching/kicking)
-    if (weaponType == WeaponType.sword || weaponType == WeaponType.axe) {
-        // Simple line attached to rHand
-        Vector3 weaponEnd = rHand + Vector3(0, -20, 10);
-        // Rotate weapon with hand?
-        // For now just draw it
-        Offset h = toScreen(rHand);
-        Offset w = toScreen(weaponEnd);
-        canvas.drawLine(h, w, paint..strokeWidth = 2);
-        if (weaponType == WeaponType.axe) {
-           canvas.drawCircle(w, 4, paint..style=PaintingStyle.fill);
-        }
-    } else if (weaponType == WeaponType.bow) {
-       // Draw bow
-    }
+    // Draw Weapons
+    if (weaponType == WeaponType.sword) _drawSword(canvas, toScreen(rHand), renderAngle, isAttacking);
+    else if (weaponType == WeaponType.axe) _drawAxe(canvas, toScreen(rHand), renderAngle, isAttacking);
+    else if (weaponType == WeaponType.bow) _drawBow(canvas, toScreen(lHand), renderAngle);
 
     canvas.restore();
+  }
+
+  void _drawSword(Canvas canvas, Offset handPos, double facing, bool attacking) {
+      double angle = facing;
+      if (attacking) angle += pi / 2;
+      final Paint p = Paint()..color = Colors.white ..strokeWidth = 2;
+      Offset end = handPos + Offset(cos(angle) * 20, sin(angle) * 5 - 20);
+      canvas.drawLine(handPos, end, p);
+      Offset guardCenter = handPos + Offset(cos(angle) * 5, sin(angle) * 1 - 5);
+      canvas.drawLine(guardCenter - Offset(5,0), guardCenter + Offset(5,0), p);
+  }
+
+  void _drawAxe(Canvas canvas, Offset handPos, double facing, bool attacking) {
+      double angle = facing;
+      if (attacking) angle += pi / 2;
+      final Paint p = Paint()..color = Colors.grey ..strokeWidth = 3;
+      Offset end = handPos + Offset(cos(angle) * 10, -25);
+      canvas.drawLine(handPos, end, p);
+      canvas.drawCircle(end, 8, Paint()..color = Colors.grey ..style = PaintingStyle.fill);
+  }
+
+  void _drawBow(Canvas canvas, Offset handPos, double facing) {
+      final Paint p = Paint()..color = Colors.brown ..style = PaintingStyle.stroke ..strokeWidth=2;
+      canvas.drawArc(Rect.fromCenter(center: handPos, width: 10, height: 30), facing - pi/2, pi, false, p);
+      canvas.drawLine(handPos + Offset(0, -15), handPos + Offset(0, 15), Paint()..color=Colors.white..strokeWidth=1);
   }
 
   Vector3 _rotateX(Vector3 v, double angle) {
@@ -236,6 +271,3 @@ class Vector3 {
   Vector3(this.x, this.y, this.z);
   Vector3 operator +(Vector3 other) => Vector3(x + other.x, y + other.y, z + other.z);
 }
-
-// Added WeaponType enum to match existing code usage in game.dart
-enum WeaponType { sword, axe, bow, none }
