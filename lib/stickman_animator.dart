@@ -86,8 +86,8 @@ class StickmanAnimator {
     // Lean Forward Logic (Pitch Spine Forward)
     // Rotate neck around X axis relative to hip
     if (_runWeight > 0.1 || isDashing) {
-       double leanAmount = 0.4 * _runWeight; // Lean forward
-       if (isDashing) leanAmount = 0.8; // Lean more when dashing
+       double leanAmount = 0.2 * _runWeight; // Reduced Lean forward
+       if (isDashing) leanAmount = 0.4; // Lean more when dashing
 
        // Apply lean to neck
        double ny = neck.y * cos(leanAmount) - neck.z * sin(leanAmount);
@@ -138,15 +138,10 @@ class StickmanAnimator {
     }
     // -- ROUND KICK LOGIC --
     else if (isAttacking && attackType == AttackType.kick) {
-       // Swing Right Leg in a circle
-       double kickProgress = (_attackTimer / 0.3); // 0.0 to 1.0
-
-       // Override Right Leg
-       // Rotate around Y axis (Hip) locally
-       // Bigger turn spin: Radius 25
-       double ka = kickProgress * pi * 2;
-       rKnee = rHip + Vector3(cos(ka)*20, 5, sin(ka)*20); // Circular motion
-       rFoot = rKnee + Vector3(cos(ka)*20, 5, sin(ka)*20); // Leg extended straight out
+       // Override Right Leg: Hold extended position while body spins
+       // Extended Side/Forward, Lifted
+       rKnee = rHip + Vector3(20, -10, 10);
+       rFoot = rKnee + Vector3(15, 0, 5);
     }
 
     // Calculate Arm Joints
