@@ -80,7 +80,7 @@ class StickmanAnimator {
     // Breathing / Bobbing
     double breath = sin(_time * 0.5) * 1.0;
     neck.y += breath * (1 - _runWeight);
-    neck.y += abs(sin(_time)) * 3.0 * _runWeight;
+    neck.y += sin(_time).abs() * 3.0 * _runWeight;
 
     // Lean Forward Logic (Pitch Spine Forward)
     // Rotate neck around X axis relative to hip
