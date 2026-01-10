@@ -84,7 +84,7 @@ class StickmanAnimator {
     neck.y += breath * (1 - _runWeight);
 
     // Run Animation (Bobbing)
-    double runBob = abs(sin(_time)) * 3.0;
+    double runBob = sin(_time).abs() * 3.0;
     neck.y += runBob * _runWeight;
 
     // Shoulders
