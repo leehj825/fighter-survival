@@ -80,57 +80,82 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    // --- RESPONSIVE LOGIC ---
-    final size = MediaQuery.of(context).size;
-    final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
+    return OrientationBuilder(
+      builder: (context, orientation) {
+        // --- RESPONSIVE LOGIC ---
+        final size = MediaQuery.of(context).size;
+        final isPortrait = orientation == Orientation.portrait;
 
-    // Use Width in Portrait, Height in Landscape for consistent sizing
-    final double refSize = isPortrait ? size.width : size.height;
+        // Use Width in Portrait, Height in Landscape for consistent sizing
+        final double refSize = isPortrait ? size.width : size.height;
 
-    // Relative sizes
-    final double titleSize = refSize * 0.1;
-    final double buttonTextSize = refSize * 0.06;
-    final double paddingV = refSize * 0.04;
-    final double paddingH = refSize * 0.1;
+        // Relative sizes
+        final double titleSize = refSize * 0.1;
+        final double buttonTextSize = refSize * 0.06;
+        final double paddingV = refSize * 0.04;
+        final double paddingH = refSize * 0.1;
 
-    return Scaffold(
-      backgroundColor: Colors.blueGrey.shade900,
-      body: Container(
-        width: double.infinity,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              "FIGHT SURVIVAL",
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: titleSize,
-                fontWeight: FontWeight.bold,
-                color: Colors.cyanAccent
+        return Scaffold(
+          backgroundColor: Colors.blueGrey.shade900,
+          body: Center(
+            child: SingleChildScrollView(
+              child: Container(
+                width: double.infinity,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      "FIGHT SURVIVAL",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontSize: titleSize,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.cyanAccent),
+                    ),
+                    SizedBox(height: paddingV / 2),
+                    Text(
+                      "Total Gems: ${GameData().totalGems}",
+                      style: TextStyle(
+                          fontSize: buttonTextSize * 0.8, color: Colors.amber),
+                    ),
+                    SizedBox(height: paddingV * 2),
+                    if (GameData().hasSavedRun) ...[
+                      _buildButton("RESUME", Colors.orange, buttonTextSize,
+                          paddingH, paddingV, _resumeGame),
+                      SizedBox(height: paddingV),
+                      _buildButton(
+                          "NEW GAME",
+                          Colors.green,
+                          buttonTextSize * 0.8,
+                          paddingH * 0.8,
+                          paddingV * 0.8,
+                          _startNewGame),
+                    ] else
+                      _buildButton("PLAY", Colors.green, buttonTextSize,
+                          paddingH, paddingV, _startNewGame),
+                    SizedBox(height: paddingV),
+                    _buildButton(
+                        "WORKSHOP",
+                        Colors.purple,
+                        buttonTextSize * 0.8,
+                        paddingH * 0.8,
+                        paddingV * 0.8,
+                        _openWorkshop),
+                    SizedBox(height: paddingV),
+                    _buildButton(
+                        "SETTINGS",
+                        Colors.grey,
+                        buttonTextSize * 0.8,
+                        paddingH * 0.8,
+                        paddingV * 0.8,
+                        _openSettings),
+                  ],
+                ),
               ),
             ),
-            SizedBox(height: paddingV / 2),
-            Text(
-              "Total Gems: ${GameData().totalGems}",
-              style: TextStyle(fontSize: buttonTextSize * 0.8, color: Colors.amber),
-            ),
-            SizedBox(height: paddingV * 2),
-
-            if (GameData().hasSavedRun) ...[
-              _buildButton("RESUME", Colors.orange, buttonTextSize, paddingH, paddingV, _resumeGame),
-              SizedBox(height: paddingV),
-              _buildButton("NEW GAME", Colors.green, buttonTextSize * 0.8, paddingH * 0.8, paddingV * 0.8, _startNewGame),
-            ] else
-              _buildButton("PLAY", Colors.green, buttonTextSize, paddingH, paddingV, _startNewGame),
-
-            SizedBox(height: paddingV),
-            _buildButton("WORKSHOP", Colors.purple, buttonTextSize * 0.8, paddingH * 0.8, paddingV * 0.8, _openWorkshop),
-
-            SizedBox(height: paddingV),
-            _buildButton("SETTINGS", Colors.grey, buttonTextSize * 0.8, paddingH * 0.8, paddingV * 0.8, _openSettings),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
