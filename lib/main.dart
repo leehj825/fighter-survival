@@ -1,8 +1,25 @@
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'game.dart';
 import 'managers.dart';
 import 'sound_service.dart';
+
+class AdManager {
+  // Production banner ad unit (App Bundle builds should use this by setting
+  // the dart-define BUNDLE_BUILT=true when building an AAB)
+  static const String bannerAdUnitId = 'bannerca-app-pub-4400173019354346/8395964292';
+
+  // Google-provided test banner (safe to use during development and for APK/non-bundle builds)
+  static const String admobBannerTestId = 'ca-app-pub-3940256099942544/6300978111';
+
+  // Set at build time via --dart-define=BUNDLE_BUILT=true for App Bundle releases.
+  static const bool isBundleBuild = bool.fromEnvironment('BUNDLE_BUILT', defaultValue: false);
+
+  // Use production ID only for release + bundle builds; otherwise use the test ID.
+  static String get bannerAdUnit => (kReleaseMode && isBundleBuild) ? bannerAdUnitId : admobBannerTestId;
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -10,6 +27,9 @@ void main() async {
 
   // 1. Initialize Audio Context Globally
   await SoundService.instance.init();
+
+  // 2. Initialize Google Mobile Ads SDK
+  await MobileAds.instance.initialize();
 
   runApp(const MaterialApp(
     title: 'Fight Survival',
@@ -25,18 +45,42 @@ class MainMenu extends StatefulWidget {
 }
 
 class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
+<<<<<<< HEAD
+=======
+  // We'll listen to GameData changes to update UI
+  late final BannerAd _bannerAd;
+  bool _isBannerAdReady = false;
+
+>>>>>>> 8646237 (andoird build)
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     GameData().addListener(_onGameDataChanged);
     SoundService.instance.playBackgroundMusic('audio/main2.mp3');
+
+    // 3. Initialize and load banner ad
+    // NOTE: During development use test ad unit IDs to avoid policy violations. Replace with production IDs for release.
+    _bannerAd = BannerAd(
+      adUnitId: 'bannerca-app-pub-4400173019354346/8395964292',
+      size: AdSize.banner,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (ad) => setState(() { _isBannerAdReady = true; }),
+        onAdFailedToLoad: (ad, error) {
+          // Dispose the ad here to free resources
+          ad.dispose();
+        },
+      ),
+    );
+    _bannerAd.load();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     GameData().removeListener(_onGameDataChanged);
+    _bannerAd.dispose();
     super.dispose();
   }
 
@@ -166,7 +210,16 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
         padding: EdgeInsets.symmetric(horizontal: padH, vertical: padV),
         backgroundColor: color,
       ),
+<<<<<<< HEAD
       child: Text(label, style: TextStyle(fontSize: fontSize)),
+=======
+      bottomNavigationBar: _isBannerAdReady
+          ? SizedBox(
+              height: _bannerAd.size.height.toDouble(),
+              child: AdWidget(ad: _bannerAd),
+            )
+          : null,
+>>>>>>> 8646237 (andoird build)
     );
   }
 }

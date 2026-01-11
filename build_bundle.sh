@@ -1,1 +1,1 @@
-   flutter build appbundle --release --dart-define=BUILD_TYPE=bundle
+flutter build appbundle --release --dart-define=BUNDLE_BUILT=true
