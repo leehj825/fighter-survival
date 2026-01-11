@@ -32,8 +32,11 @@ jobs:
 
       # Adding flutter create . to ensure android/ directory exists if not committed
       # This is a safety measure for this specific prototype environment
-      - name: Create Android scaffolding
-        run: flutter create . --platforms android
+      - name: Create scaffolding
+        run: flutter create . --platforms android,ios,macos
+
+      - name: Generate Launcher Icons
+        run: dart run flutter_launcher_icons
 
       - name: Fix Kotlin Version
         run: |
