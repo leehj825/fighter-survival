@@ -89,11 +89,11 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
+            VALUE "CompanyName", "com.hyejunlee.fightersurvival" "\0"
             VALUE "FileDescription", "fight_survival" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "fight_survival" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 com.hyejunlee.fightersurvival. All rights reserved." "\0"
             VALUE "OriginalFilename", "fight_survival.exe" "\0"
             VALUE "ProductName", "fight_survival" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"

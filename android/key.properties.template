@@ -1,0 +1,11 @@
+# Example key.properties (DO NOT COMMIT - copy to android/key.properties and fill your secrets)
+# storeFile is relative to the project root (or can be absolute).
+storePassword=YOUR_STORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=your_key_alias
+# Common location: place the keystore in the Android app module (recommended): android/app/upload-keystore.jks
+# If you put it in the app module, use just the filename (relative to android/app):
+# storeFile=upload-keystore.jks
+# If you put the keystore in android/ (project-level), reference it relative to the app module with ../:
+# storeFile=../key.jks
+storeFile=upload-keystore.jks

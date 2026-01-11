@@ -47,3 +47,7 @@ app.*.map.json
 
 macos/
 .flutter-plugins
+android/key.properties
+# Keystore files (private - do not commit)
+android/*.jks
+android/*.keystore

@@ -45,13 +45,8 @@ class MainMenu extends StatefulWidget {
 }
 
 class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
-<<<<<<< HEAD
-=======
   // We'll listen to GameData changes to update UI
-  late final BannerAd _bannerAd;
-  bool _isBannerAdReady = false;
 
->>>>>>> 8646237 (andoird build)
   @override
   void initState() {
     super.initState();
@@ -59,28 +54,13 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
     GameData().addListener(_onGameDataChanged);
     SoundService.instance.playBackgroundMusic('audio/main2.mp3');
 
-    // 3. Initialize and load banner ad
-    // NOTE: During development use test ad unit IDs to avoid policy violations. Replace with production IDs for release.
-    _bannerAd = BannerAd(
-      adUnitId: 'bannerca-app-pub-4400173019354346/8395964292',
-      size: AdSize.banner,
-      request: const AdRequest(),
-      listener: BannerAdListener(
-        onAdLoaded: (ad) => setState(() { _isBannerAdReady = true; }),
-        onAdFailedToLoad: (ad, error) {
-          // Dispose the ad here to free resources
-          ad.dispose();
-        },
-      ),
-    );
-    _bannerAd.load();
+    // No banner on the main menu (ads shown on Game screen)
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     GameData().removeListener(_onGameDataChanged);
-    _bannerAd.dispose();
     super.dispose();
   }
 
@@ -148,6 +128,7 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
+
                     Text(
                       "FIGHT SURVIVAL",
                       textAlign: TextAlign.center,
@@ -198,6 +179,7 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
               ),
             ),
           ),
+
         );
       },
     );
@@ -210,16 +192,7 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
         padding: EdgeInsets.symmetric(horizontal: padH, vertical: padV),
         backgroundColor: color,
       ),
-<<<<<<< HEAD
       child: Text(label, style: TextStyle(fontSize: fontSize)),
-=======
-      bottomNavigationBar: _isBannerAdReady
-          ? SizedBox(
-              height: _bannerAd.size.height.toDouble(),
-              child: AdWidget(ad: _bannerAd),
-            )
-          : null,
->>>>>>> 8646237 (andoird build)
     );
   }
 }
@@ -234,17 +207,41 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   late RpgGame _game;
+  late final BannerAd _bannerAd;
+  bool _isBannerAdReady = false;
+  String? _adLoadError;
 
   @override
   void initState() {
     super.initState();
     _game = RpgGame(resumeGame: widget.resume);
     WidgetsBinding.instance.addObserver(this);
+
+    // Initialize banner ad for the Game screen
+    debugPrint('Using banner ad unit: ${AdManager.bannerAdUnit}');
+    _bannerAd = BannerAd(
+      adUnitId: AdManager.bannerAdUnit,
+      size: AdSize.banner,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          debugPrint('Game BannerAd loaded');
+          setState(() { _isBannerAdReady = true; _adLoadError = null; });
+        },
+        onAdFailedToLoad: (ad, error) {
+          debugPrint('Game BannerAd failed to load: ${error.message}');
+          setState(() { _isBannerAdReady = false; _adLoadError = error.message; });
+          ad.dispose();
+        },
+      ),
+    );
+    _bannerAd.load();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _bannerAd.dispose();
     super.dispose();
   }
 
@@ -270,68 +267,86 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
         }
       },
       child: SafeArea(
-        child: GameWidget(
-          game: _game,
-          overlayBuilderMap: {
-            'GameOver': (context, RpgGame game) {
-              return Center(
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  color: Colors.black.withOpacity(0.8),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        "GAME OVER",
-                        style: TextStyle(color: Colors.red, fontSize: 32, fontWeight: FontWeight.bold),
+        child: Column(
+          children: [
+            if (_isBannerAdReady)
+              SizedBox(
+                height: AdSize.banner.height.toDouble(),
+                child: AdWidget(ad: _bannerAd),
+              )
+            else if (_adLoadError != null)
+              Container(
+                height: AdSize.banner.height.toDouble(),
+                alignment: Alignment.center,
+                color: Colors.black26,
+                child: Text('Ad failed: $_adLoadError', style: TextStyle(color: Colors.white70)),
+              ),
+            Expanded(
+              child: GameWidget(
+                game: _game,
+                overlayBuilderMap: {
+                  'GameOver': (context, RpgGame game) {
+                    return Center(
+                      child: Container(
+                        padding: const EdgeInsets.all(20),
+                        color: Colors.black.withOpacity(0.8),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              "GAME OVER",
+                              style: TextStyle(color: Colors.red, fontSize: 32, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 20),
+                            ElevatedButton(
+                              onPressed: () {
+                                Navigator.of(context).pop();
+                              },
+                              child: const Text("Return to Menu"),
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 20),
-                      ElevatedButton(
-                        onPressed: () {
-                          Navigator.of(context).pop();
-                        },
-                        child: const Text("Return to Menu"),
+                    );
+                  },
+                  'PauseMenu': (context, RpgGame game) {
+                    return Center(
+                      child: Container(
+                        padding: const EdgeInsets.all(20),
+                        color: Colors.black.withOpacity(0.8),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              "PAUSED",
+                              style: TextStyle(color: Colors.cyan, fontSize: 32, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 20),
+                            ElevatedButton(
+                              onPressed: () {
+                                game.paused = false;
+                                game.overlays.remove('PauseMenu');
+                              },
+                              child: const Text("Resume"),
+                            ),
+                            const SizedBox(height: 10),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                              onPressed: () {
+                                game.exitRun();
+                                Navigator.of(context).pop();
+                              },
+                              child: const Text("Exit to Menu (Save Gems)"),
+                            ),
+                          ],
+                        ),
                       ),
-                    ],
-                  ),
-                ),
-              );
-            },
-            'PauseMenu': (context, RpgGame game) {
-              return Center(
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  color: Colors.black.withOpacity(0.8),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        "PAUSED",
-                        style: TextStyle(color: Colors.cyan, fontSize: 32, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 20),
-                      ElevatedButton(
-                        onPressed: () {
-                          game.paused = false;
-                          game.overlays.remove('PauseMenu');
-                        },
-                        child: const Text("Resume"),
-                      ),
-                      const SizedBox(height: 10),
-                      ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                        onPressed: () {
-                          game.exitRun();
-                          Navigator.of(context).pop();
-                        },
-                        child: const Text("Exit to Menu (Save Gems)"),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          },
+                    );
+                  },
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );
