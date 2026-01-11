@@ -32,7 +32,7 @@ class StickmanAnimator {
     this.color = Colors.white,
     this.scale = 1.0,
     this.weaponType = WeaponType.none,
-    this.attackType = AttackType.punch,
+    this.attackType = AttackType.punch
   });
 
   void update(double dt, Vector2 velocity, bool isDashing) {
@@ -57,7 +57,6 @@ class StickmanAnimator {
       // Adjusted offset to -pi/2 (-90 degrees) to fix Left/Right swap
       // Invert Y velocity to fix Up/Down swap
       double targetAngle = atan2(-velocity.y, velocity.x) - pi / 2;
-
       double diff = targetAngle - _facingAngle;
       while (diff < -pi) diff += 2 * pi;
       while (diff > pi) diff -= 2 * pi;
@@ -93,21 +92,29 @@ class StickmanAnimator {
     // Breathing / Bobbing
     double breath = sin(_time * 0.5) * 1.0;
     neck.y += breath * (1 - _runWeight);
-    neck.y += sin(_time).abs() * 3.0 * _runWeight; // Fixed abs()
+    neck.y += sin(_time).abs() * 3.0 * _runWeight;
 
-    // Lean Forward Logic (Pitch Spine Forward)
-    if (_runWeight > 0.1 || isDashing) {
-       double leanAmount = 0.2 * _runWeight; // Reduced Lean forward
-       if (isDashing) leanAmount = 0.4; // Lean more when dashing
+    // LEAN FORWARD (Running/Dashing)
+    if (_runWeight > 0.1 || _wasDashing) {
+       double leanAmount = 0.15 * _runWeight;
+       if (_wasDashing) leanAmount = 0.9; // Deep lean for dash
 
-       // Apply lean to neck
        double ny = neck.y * cos(leanAmount) - neck.z * sin(leanAmount);
        double nz = neck.y * sin(leanAmount) + neck.z * cos(leanAmount);
        neck.y = ny;
        neck.z = nz;
     }
 
-    // Shoulders (Centered at Neck for Triangular shape)
+    // BODY LEAN (Whirlwind Kick)
+    // Lean Upper Body Opposite to Kick (Lean Left)
+    if (isAttacking && (attackType == AttackType.kick || weaponType == WeaponType.none)) {
+        double kickProgress = (_attackTimer / 0.3);
+        // Peak lean at middle of animation
+        double lean = sin(kickProgress * pi) * -8.0;
+        neck.x += lean;
+    }
+
+    // Shoulders (Centered at Neck)
     Vector3 lShoulder = Vector3(0, neck.y, neck.z);
     Vector3 rShoulder = Vector3(0, neck.y, neck.z);
 
@@ -120,35 +127,42 @@ class StickmanAnimator {
     double armSwing = cos(_time) * 0.8 * _runWeight;
 
     if (_wasDashing) {
-       legSwing = 1.0; // Legs fly back during dash
+       legSwing = 1.0;
        armSwing = 0.0;
     }
 
     // LEGS (Triangular /\ )
-    // Offset X by -3/3 to make them flare out from center
     Vector3 lKnee = _rotateX(Vector3(-3, 12, 0), legSwing) + lHip;
     Vector3 rKnee = _rotateX(Vector3(3, 12, 0), -legSwing) + rHip;
     Vector3 lFoot = _rotateX(Vector3(-3, 12, 0), legSwing + 0.2) + lKnee;
     Vector3 rFoot = _rotateX(Vector3(3, 12, 0), -legSwing + 0.2) + rKnee;
 
+    // Kick Override
+    if (isAttacking && (attackType == AttackType.kick || weaponType == WeaponType.none)) {
+        // Fixed leg pose relative to spinning body
+        // High kick pose (lower Y value = higher up)
+        // Leg extended to the side/front in local space
+        rKnee = rHip + Vector3(10, -5, 5);
+        rFoot = rKnee + Vector3(12, -2, 2);
+    }
+
     // ARMS (Triangular \/ )
     double lArmAngle = -armSwing;
     double rArmAngle = armSwing;
-    double rElbowBend = 0.0; // Straight by default
+    double rElbowBend = 0.0;
     double lElbowBend = 0.0;
 
-    // Default "Guard" pose when not running (arms slightly bent up)
+    // Default "A-Pose" (Straight down diagonally)
     if (_runWeight < 0.1 && !_wasDashing && !isAttacking) {
-       lArmAngle = -0.2;
-       rArmAngle = -0.2;
-       lElbowBend = -0.5; // Slight bend
-       rElbowBend = -0.5;
+       lArmAngle = 0.3;  // Angle out slightly
+       rArmAngle = 0.3;
+       lElbowBend = 0.0; // Straight
+       rElbowBend = 0.0;
     }
 
-    // Attack/Weapon Poses
+    // Weapon/Attack Poses
     if (isAttacking) {
-        // Default attack pose (will be overridden by Kick/Dash)
-        if (attackType != AttackType.kick) rArmAngle = -1.5;
+      if (attackType != AttackType.kick && weaponType != WeaponType.none) rArmAngle = -1.5;
     }
 
     if (weaponType == WeaponType.bow) {
@@ -158,43 +172,35 @@ class StickmanAnimator {
        rArmAngle = -0.5;
     }
 
-    // --- DASH ANIMATION LOGIC ---
+    // --- DASH ANIMATION (Superman Pose) ---
     if (_wasDashing) {
-       // Left arm tucked back
-       lArmAngle = 0.8;
-       lElbowBend = -1.5;
+       lArmAngle = 0.8; // Left arm back
+       lElbowBend = -1.0;
 
-       // Right Arm Punch Animation Curve
-       // 0.0 -> 0.1s: Wind Up (Pull back)
-       // 0.1 -> 0.3s: Strike (Punch forward)
-       double punchProgress = (_dashTimer / 0.3).clamp(0.0, 1.0);
+       // Right Arm: Straight out to direction of dash
+       // No pump/punch, just extends firmly
+       double extension = (_dashTimer / 0.1).clamp(0.0, 1.0);
 
-       if (punchProgress < 0.3) {
-          // Wind Up Phase
-          rArmAngle = 0.5; // Arm back
-          rElbowBend = -2.0; // Cocked elbow
-       } else {
-          // Strike Phase
-          rArmAngle = -1.6; // Point forward
-          rElbowBend = 0.0; // FULL STRAIGHT EXTENSION
-
-          // "Small details like slight swing"
-          // We add a sine wave vibration to the angle as it extends
-          double swing = sin(_dashTimer * 20) * 0.1;
-          rArmAngle += swing;
-       }
+       // Smoothly transition from current angle to forward (-1.6)
+       rArmAngle = -1.6 * extension;
+       rElbowBend = 0.0;
     }
 
-    // Arms with Triangular Start (Offset X by -6/6)
+    // Calculate Arm Joints (Offset X by -6/6 for triangular shoulders)
     Vector3 lElbow = _rotateX(Vector3(-6, 10, 0), lArmAngle) + lShoulder;
     Vector3 rElbow = _rotateX(Vector3(6, 10, 0), rArmAngle) + rShoulder;
 
-    // Hands relative to elbows
     Vector3 lHand = _rotateX(Vector3(0, 10, 0), lArmAngle + lElbowBend) + lElbow;
     Vector3 rHand = _rotateX(Vector3(0, 10, 0), rArmAngle + rElbowBend) + rElbow;
 
-    // Attack Animation Extensions
-    if (isAttacking && attackType != AttackType.kick) {
+    // Dash Extension (Reach forward)
+    if (_wasDashing) {
+       rHand.z += 25;
+       rHand.x = rShoulder.x; // Center align
+    }
+
+    // Attack Extension (Standard Punch for non-kick attacks)
+    if (isAttacking && attackType != AttackType.kick && weaponType != WeaponType.none) {
        double punchProgress = sin((_attackTimer / 0.3) * pi);
        if (weaponType == WeaponType.none) {
           rHand.z += punchProgress * 15;
@@ -205,24 +211,9 @@ class StickmanAnimator {
        }
     }
 
-    // Dash Punch Extension Logic (Z-Depth)
-    if (_wasDashing && _dashTimer > 0.1) {
-       rHand.z += 25; // Punch reaches deep into Z space
-       // rHand.x = rShoulder.x; // Keeping triangular math for now to avoid centering conflicts
-    }
-
-    // -- ROUND KICK LOGIC --
-    if (isAttacking && attackType == AttackType.kick) {
-       // Override Right Leg: Hold extended position while body spins
-       // Extended Side/Forward, Lifted
-       // We override the previously calculated knee/foot
-       rKnee = rHip + Vector3(20, -10, 10);
-       rFoot = rKnee + Vector3(15, 0, 5);
-    }
-
     // --- 3. GLOBAL ROTATION ---
     double renderAngle = _facingAngle;
-    if (isAttacking && attackType == AttackType.kick) {
+    if (isAttacking && (attackType == AttackType.kick || weaponType == WeaponType.none)) {
       // Whirlwind Spin: Spin 360 degrees during attack
       double kickProgress = (_attackTimer / 0.3);
       renderAngle += kickProgress * pi * 2;

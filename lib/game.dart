@@ -934,7 +934,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
   Enemy({this.isElite = false, this.modifier = EnemyModifier.none})
       : super(size: Vector2.all(isElite ? 100 : 50), anchor: Anchor.center) {
-     if(isElite) health = health * 5;
+     if(isElite) health = health * 30;
      _maxHealth = health;
   }
 
