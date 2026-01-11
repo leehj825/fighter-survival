@@ -110,7 +110,7 @@ class ActionButton extends PositionComponent {
 }
 
 /// The main Game class.
-class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
+class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDetector mixin
   final bool resumeGame;
   late Player player;
   late Hud hud;
@@ -148,7 +148,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
   DateTime? _lastActionTime;
 
   // Tweakable Variable for Dash Sensitivity
-  static const double dashVelocityThreshold = 2500.0;
+  static const double dashVelocityThreshold = 1000.0; // Lowered from 2500.0
 
   // Camera Shake State
   double _shakeTimer = 0.0;
@@ -468,29 +468,6 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
     }
   }
 
-  // --- TAP TO SHOOT (If Blaster Unlocked) ---
-  @override
-  void onTapDown(TapDownInfo info) {
-    if (gameOver) return;
-
-    final Vector2 tapPos = info.eventPosition.widget;
-
-    // Check Button Taps
-    if (slashButton.containsPoint(tapPos - hud.position)) {
-      player.slash();
-      return;
-    }
-
-    // Check if blaster is unlocked
-    if (GameData().unlockBlaster) {
-       // Fire towards tap position
-       Vector2 screenCenter = size / 2;
-       Vector2 dir = (tapPos - screenCenter).safeNormalized();
-
-       player.shoot(dir);
-    }
-  }
-
   // --- MULTI-TOUCH INPUT HANDLING ---
 
   @override
@@ -503,7 +480,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
 
     // 1. Check Button first
     if (slashButton.containsPoint(startPos - hud.position)) {
-        // Handled by onTapDown usually, but if drag starts here, ignore it for dash/move
+        player.slash(); // Fixed: Handle slash here
         return;
     }
 
@@ -522,6 +499,13 @@ class RpgGame extends FlameGame with MultiTouchDragDetector, TapDetector {
       _actionPointerId = pointerId;
       _lastActionPos = startPos;
       _lastActionTime = DateTime.now();
+
+      // Optional: Tap to shoot logic
+      if (GameData().unlockBlaster) {
+         Vector2 screenCenter = size / 2;
+         Vector2 dir = (startPos - screenCenter).safeNormalized();
+         player.shoot(dir);
+      }
     }
   }
 
