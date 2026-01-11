@@ -25,14 +25,11 @@ class MainMenu extends StatefulWidget {
 }
 
 class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
-  // We'll listen to GameData changes to update UI
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     GameData().addListener(_onGameDataChanged);
-
-    // 2. Play App Music on Start
     SoundService.instance.playBackgroundMusic('audio/main2.mp3');
   }
 
@@ -74,21 +71,28 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
   }
 
   void _openWorkshop() {
-    showDialog(
-      context: context,
-      builder: (ctx) => const WorkshopDialog(),
-    );
+    showDialog(context: context, builder: (ctx) => const WorkshopDialog());
   }
 
   void _openSettings() {
-    showDialog(
-      context: context,
-      builder: (ctx) => const SettingsDialog(),
-    );
+    showDialog(context: context, builder: (ctx) => const SettingsDialog());
   }
 
   @override
   Widget build(BuildContext context) {
+    // --- RESPONSIVE LOGIC ---
+    final size = MediaQuery.of(context).size;
+    final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
+
+    // Use Width in Portrait, Height in Landscape for consistent sizing
+    final double refSize = isPortrait ? size.width : size.height;
+
+    // Relative sizes
+    final double titleSize = refSize * 0.1;
+    final double buttonTextSize = refSize * 0.06;
+    final double paddingV = refSize * 0.04;
+    final double paddingH = refSize * 0.1;
+
     return Scaffold(
       backgroundColor: Colors.blueGrey.shade900,
       body: Container(
@@ -96,65 +100,48 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text(
+            Text(
               "FIGHT SURVIVAL",
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.cyanAccent),
+              style: TextStyle(
+                fontSize: titleSize,
+                fontWeight: FontWeight.bold,
+                color: Colors.cyanAccent
+              ),
             ),
-            const SizedBox(height: 10),
+            SizedBox(height: paddingV / 2),
             Text(
               "Total Gems: ${GameData().totalGems}",
-              style: const TextStyle(fontSize: 20, color: Colors.amber),
+              style: TextStyle(fontSize: buttonTextSize * 0.8, color: Colors.amber),
             ),
-            const SizedBox(height: 50),
+            SizedBox(height: paddingV * 2),
+
             if (GameData().hasSavedRun) ...[
-              ElevatedButton(
-                onPressed: _resumeGame,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
-                  backgroundColor: Colors.orange,
-                ),
-                child: const Text("RESUME", style: TextStyle(fontSize: 24)),
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: _startNewGame,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
-                  backgroundColor: Colors.green,
-                ),
-                child: const Text("NEW GAME", style: TextStyle(fontSize: 20)),
-              ),
+              _buildButton("RESUME", Colors.orange, buttonTextSize, paddingH, paddingV, _resumeGame),
+              SizedBox(height: paddingV),
+              _buildButton("NEW GAME", Colors.green, buttonTextSize * 0.8, paddingH * 0.8, paddingV * 0.8, _startNewGame),
             ] else
-              ElevatedButton(
-                onPressed: _startNewGame,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
-                  backgroundColor: Colors.green,
-                ),
-                child: const Text("PLAY", style: TextStyle(fontSize: 24)),
-              ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _openWorkshop,
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
-                backgroundColor: Colors.purple,
-              ),
-              child: const Text("WORKSHOP", style: TextStyle(fontSize: 20)),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _openSettings,
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
-                backgroundColor: Colors.grey,
-              ),
-              child: const Text("SETTINGS", style: TextStyle(fontSize: 20)),
-            ),
+              _buildButton("PLAY", Colors.green, buttonTextSize, paddingH, paddingV, _startNewGame),
+
+            SizedBox(height: paddingV),
+            _buildButton("WORKSHOP", Colors.purple, buttonTextSize * 0.8, paddingH * 0.8, paddingV * 0.8, _openWorkshop),
+
+            SizedBox(height: paddingV),
+            _buildButton("SETTINGS", Colors.grey, buttonTextSize * 0.8, paddingH * 0.8, paddingV * 0.8, _openSettings),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildButton(String label, Color color, double fontSize, double padH, double padV, VoidCallback onPressed) {
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        padding: EdgeInsets.symmetric(horizontal: padH, vertical: padV),
+        backgroundColor: color,
+      ),
+      child: Text(label, style: TextStyle(fontSize: fontSize)),
     );
   }
 }
