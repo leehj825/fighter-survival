@@ -13,6 +13,9 @@ dependencies:
   shared_preferences: ^2.2.0
   audioplayers: ^6.0.0
   google_mobile_ads: ^7.0.0
+  stickman_3d:
+    git:
+      url: https://github.com/leehj825/stickman-animator.git
 
 
 dev_dependencies:
@@ -34,3 +37,4 @@ flutter:
   assets:
     - assets/audio/
     - assets/icon.png
+    - assets/data/fighter_animations.sap

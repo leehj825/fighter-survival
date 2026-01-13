@@ -699,9 +699,22 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     health = maxHealth;
     dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
 
-    // Initialize Animator instead of SVGs
-    // Set Animator to use Kick by default for attacks and remove stick weapon
-    _animator = StickmanAnimator(color: Colors.cyanAccent, scale: 1.2, attackType: AttackType.kick, weaponType: WeaponType.none);
+    // 1. Load the .sap file string/data from assets
+    // Note: Adjust this line based on how your library expects to receive data
+    // (e.g., if it takes a file path or the actual JSON/String content)
+    String animationData = await gameRef.assets.readFile('data/fighter_animations.sap');
+
+    // 2. Initialize the animator with the loaded data
+    _animator = StickmanAnimator(
+      color: Colors.cyanAccent,
+      scale: 1.2,
+      attackType: AttackType.kick,
+      weaponType: WeaponType.none,
+      data: animationData // Pass the loaded data here
+    );
+
+    // Set default animation
+    _animator.play("Standard Idle");
   }
 
   @override
