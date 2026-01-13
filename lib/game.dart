@@ -749,6 +749,17 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     // Update Animator
     _animator.isAttacking = isSlashing;
+
+    // Animation Logic
+    if (isSlashing) {
+      _animator.play("Hurricane Kick");
+    } else if (velocity.length > 10 || isDashing) {
+      // User requested "Standard Running", but file contains "Standard Run"
+      _animator.play("Standard Run");
+    } else {
+      _animator.play("Standard Idle");
+    }
+
     _animator.update(dt, velocity, isDashing);
   }
 

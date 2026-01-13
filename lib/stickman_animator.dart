@@ -66,50 +66,18 @@ class StickmanAnimator {
 
   void play(String animationName) {
     if (_clips.containsKey(animationName)) {
+      if (controller.activeClip?.name == animationName) return;
+
       controller.activeClip = _clips[animationName];
+      controller.currentFrameIndex = 0;
       controller.setMode(EditorMode.animate);
       controller.isPlaying = true;
     }
   }
 
   void update(double dt, Vector2 velocity, bool isDashing) {
-    // If we are in Animate mode (Clips loaded and playing), perform basic state machine
-    if (controller.mode == EditorMode.animate && _clips.isNotEmpty) {
-        String targetAnim = "Standard Idle";
-
-        // Logic to switch animations based on state
-        // Note: We use "Standard Run" for movement
-        if (velocity.length > 10) {
-             if (_clips.containsKey("Standard Run")) targetAnim = "Standard Run";
-             else if (_clips.containsKey("Running")) targetAnim = "Running";
-        }
-
-        // Handle Dash
-        if (isDashing) {
-            // Try to find a dash animation, otherwise use run or roll
-            if (_clips.containsKey("Sprinting Forward Roll")) targetAnim = "Sprinting Forward Roll";
-            else if (_clips.containsKey("Standard Run")) targetAnim = "Standard Run";
-        }
-
-        if (controller.isAttacking) {
-             if (_attackType == AttackType.kick) {
-                if (_clips.containsKey("Roundhouse Kick")) targetAnim = "Roundhouse Kick";
-                else if (_clips.containsKey("Kicking")) targetAnim = "Kicking";
-             } else {
-                if (_clips.containsKey("Hook Punch")) targetAnim = "Hook Punch";
-                else if (_clips.containsKey("Punching")) targetAnim = "Punching";
-             }
-        }
-
-        // Switch if needed
-        if (controller.activeClip?.name != targetAnim) {
-             play(targetAnim);
-        }
-    } else {
-        // Legacy/Procedural Mode
-        // Pass isDashing to legacy strategy?
-        // MotionStrategy.update doesn't accept isDashing.
-        // We can set it on the strategy instance.
+    // Legacy/Procedural Mode Fallback
+    if (controller.mode != EditorMode.animate || _clips.isEmpty) {
         _legacyStrategy?.isDashing = isDashing;
     }
 
