@@ -156,6 +156,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
 
   late World world;
   late CameraComponent cameraComponent;
+  late GridBackground gridBackground;
 
   @override
   Future<void> onLoad() async {
@@ -190,7 +191,8 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     }
 
     // Add Infinite Background (Grid)
-    world.add(GridBackground());
+    gridBackground = GridBackground();
+    world.add(gridBackground);
 
     // Spawn Obstacles (Rough background elements)
     _spawnObstacles();
@@ -198,7 +200,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     // Setup Camera
     cameraComponent = CameraComponent(world: world);
     cameraComponent.viewfinder.anchor = Anchor.center;
-    cameraComponent.follow(player);
+    cameraComponent.follow(player); // Locked follow (Bird's Eye is handled by StickmanPainter rotation)
     add(cameraComponent);
     add(world);
 
@@ -753,11 +755,16 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     // Animation Logic
     if (isSlashing) {
       _animator.play("Hurricane Kick");
-    } else if (velocity.length > 10 || isDashing) {
-      // User requested "Standard Running", but file contains "Standard Run"
-      _animator.play("Standard Run");
+      gameRef.gridBackground.isVisible = false; // Hide grid during attack
     } else {
-      _animator.play("Standard Idle");
+      gameRef.gridBackground.isVisible = true; // Show grid otherwise
+
+      if (velocity.length > 10 || isDashing) {
+         // User requested "Standard Running", but file contains "Standard Run"
+         _animator.play("Standard Run");
+      } else {
+         _animator.play("Standard Idle");
+      }
     }
 
     _animator.update(dt, velocity, isDashing);
