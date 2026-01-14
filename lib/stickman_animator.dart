@@ -3,7 +3,7 @@ import 'dart:math';
 import 'dart:ui';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
-import 'package:stickman_3d/stickman_3d.dart';
+import 'package:stickman_3d/stickman_3d.dart' hide CameraView, StickmanPainter;
 import 'package:vector_math/vector_math_64.dart' as v;
 import 'custom_stickman_painter.dart';
 
