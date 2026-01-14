@@ -968,7 +968,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     _animator = StickmanAnimator(
       color: c,
       scale: s,
-      weaponType: w,
+      weaponType: WeaponType.none, // Remove weapon (sword) image for everyone per request
       data: gameRef.animationData
     );
 
@@ -1018,7 +1018,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     double distToPlayer = position.distanceTo(gameRef.player.position);
     if (distToPlayer < size.x + 10) {
        _animator.isAttacking = true;
-       _animator.stopAnimation(); // Switch to procedural punch
+       _animator.play("Kicking"); // Use kicking animation
     } else {
        _animator.isAttacking = false;
        // Play animations based on movement
@@ -1209,7 +1209,7 @@ class ShooterEnemy extends Enemy {
     _animator = StickmanAnimator(
       color: Colors.purpleAccent,
       scale: 1.0,
-      weaponType: WeaponType.bow,
+      weaponType: WeaponType.none, // Remove bow image for Shooter per request (animation handles visual)
       data: gameRef.animationData
     );
     _animator.play("Standard Idle");

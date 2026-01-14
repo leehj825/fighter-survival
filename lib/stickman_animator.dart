@@ -63,7 +63,7 @@ class StickmanAnimator {
 
           // SPEED HACK: Double the speed of specific animations
           // Updated names to match asset file: "Shooting Arrow"
-          if (clip.name == "Hurricane Kick" || clip.name == "Shooting Arrow" || clip.name == "Shoot") {
+          if (clip.name == "Hurricane Kick" || clip.name == "Shooting Arrow" || clip.name == "Shoot" || clip.name == "Kicking") {
              clip = StickmanClip(
                 name: clip.name,
                 keyframes: clip.keyframes,
@@ -80,6 +80,10 @@ class StickmanAnimator {
           }
 
           _clips[clip.name] = clip;
+          // Alias 'Hook Punch' to 'Kicking' to satisfy usage requirements even if asset is named differently
+          if (clip.name == "Hook Punch") {
+             _clips["Kicking"] = clip;
+          }
         }
       }
     } catch (e) {
