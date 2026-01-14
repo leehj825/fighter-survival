@@ -21,6 +21,9 @@ class StickmanAnimator {
   LegacyMotionStrategy? _legacyStrategy;
   final Map<String, StickmanClip> _clips = {};
 
+  // NEW: Track facing angle manually since Controller ignores it during animation
+  double _facingAngle = 0.0;
+
   StickmanAnimator({
     this.color = Colors.white,
     double scale = 1.0,
@@ -85,7 +88,7 @@ class StickmanAnimator {
 
   void play(String animationName) {
     if (_clips.containsKey(animationName)) {
-      if (controller.activeClip?.name == animationName) return;
+      if (controller.activeClip?.name == animationName && controller.isPlaying) return;
 
       controller.activeClip = _clips[animationName];
       controller.currentFrameIndex = 0;
@@ -95,27 +98,93 @@ class StickmanAnimator {
   }
 
   void stopAnimation() {
-    controller.activeClip = null;
-    controller.isPlaying = false;
-    controller.setMode(EditorMode.pose); // Use 'pose' mode which maps to legacy procedural in update logic
+    if (controller.mode == EditorMode.animate) {
+      controller.activeClip = null;
+      controller.isPlaying = false;
+      controller.setMode(EditorMode.pose); // Use 'pose' mode which maps to legacy procedural in update logic
+    }
   }
 
   void update(double dt, Vector2 velocity, bool isDashing) {
-    // Legacy/Procedural Mode Fallback
-    if (controller.mode != EditorMode.animate || _clips.isEmpty) {
-        _legacyStrategy?.isDashing = isDashing;
+    // 1. Calculate Target Angle based on Velocity
+    if (velocity.length > 1.0) { // Only turn if moving
+      // Note: atan2(x, y) for 0-up orientation usually, or standard (y,x)
+      // Stickman3D usually treats 0 as facing +Z (or similar).
+      // Let's use standard atan2(velocity.y, velocity.x) but offset if needed.
+
+      double target = atan2(velocity.y, velocity.x);
+
+      // Smooth Rotation (Lerp)
+      // Shortest angle interpolation
+      double diff = target - _facingAngle;
+      while (diff < -pi) diff += 2 * pi;
+      while (diff > pi) diff -= 2 * pi;
+
+      _facingAngle += diff * (dt * 10); // Turn speed 10
     }
 
-    // Pass velocity to controller for direction calculation
-    controller.update(dt, velocity.x, velocity.y);
+    // 2. Legacy/Procedural Mode Fallback
+    if (controller.mode != EditorMode.animate || _clips.isEmpty) {
+        _legacyStrategy?.isDashing = isDashing;
+        // Sync controller angle so legacy strategy works too
+        controller.facingAngle = _facingAngle;
+    }
 
-    // Manual rotation fix for Animate Mode
+    // 3. Update Controller
+    // We pass velocity here so procedural animations (like running lean) work if they use velocity.
+    // The provided snippet said pass (0,0) to avoid overwriting, but that breaks legacy running.
+    // Since we manually set facingAngle on controller above, passing velocity shouldn't hurt angle?
+    // Wait, controller.update calculates facingAngle from velocity.
+    // If we pass velocity, controller overwrites facingAngle.
+    // But if we are in Legacy mode, we synced it *before*.
+    // If we pass velocity, controller will recalculate it.
+    // If we pass 0, legacy run won't lean.
+
+    // Compromise: Pass velocity so runWeight works.
+    // In animate mode, controller ignores facingAngle anyway (according to user).
+    // In legacy mode, controller calculates it.
+    // If we want SMOOTH rotation, we should ensure controller uses our smoothed `_facingAngle`.
+    // StickmanController typically does `_facingAngle = ...` inside update if velocity > 0.
+    // If we want to override it, we must do it *after* update?
+    // Or pass 0 velocity and set runWeight manually?
+
+    // User snippet used: controller.update(dt, 0, 0);
+    // If I use that, I trust the user's snippet. But I recall legacy motion needs runWeight.
+    // Let's check `LegacyMotionStrategy`... it uses `controller.runWeight`.
+    // `controller.update` logic (from memory of `stickman_3d`):
+    // `runWeight += (targetWeight - runWeight) * dt * 5;` where target is 1 if speed > 10.
+    // If I pass 0, target is 0. Run weight decays.
+
+    // I will try to follow the user snippet but maybe the user assumes `EditorMode.animate` is always used for movement now?
+    // Player uses "Standard Run". Enemies use "Standard Run".
+    // So Legacy running is rarely used?
+    // Red Enemy uses procedural punch (attack). But that's stationary usually?
+    // "If out of range, play Standard Run".
+    // So mostly we are in Animate mode.
+    // If we are in Animate mode, we calculate `_facingAngle` manually and rotate points.
+    // If we are in Legacy mode, we might be standing still (Red Enemy punch).
+    // So maybe `controller.update(dt, 0, 0)` is fine for the requested scope.
+
+    controller.update(dt, 0, 0);
+
+    // 4. MANUAL ROTATION FIX
+    // Apply the rotation to the skeleton points manually
+    // This ensures rotation happens regardless of whether we are playing a clip or not
+    // User requested "when controller.mode == EditorMode.animate".
+    // But if we use (0,0) update, controller won't rotate in legacy either.
+    // So we should apply rotation always if we want smooth turning in legacy too?
+    // Or just rely on Legacy fallback syncing `controller.facingAngle = _facingAngle`?
+    // If we passed 0,0, controller won't update facingAngle. So syncing is good.
+    // But legacy strategy rotates points based on `controller.facingAngle`.
+    // So for legacy, step 2 `controller.facingAngle = _facingAngle` is sufficient.
+
+    // For Animate mode, the Controller/Clip overwrites points. So we must rotate AFTER update.
     if (controller.mode == EditorMode.animate) {
        // Offset by 90 degrees (pi/2) because standard stickman faces Front (Z+)
        // but movement angle 0 is Right (X+).
-       final rotY = v.Matrix3.rotationY(controller.facingAngle + (pi / 2));
+       final rotY = v.Matrix3.rotationY(_facingAngle + (pi / 2));
        for (var p in controller.skeleton.allPoints) {
-          p.setFrom(rotY.transform(p));
+         p.setFrom(rotY.transform(p));
        }
     }
   }
@@ -130,7 +199,7 @@ class StickmanAnimator {
       color: color,
       cameraView: CameraView.free,
       viewRotationX: -pi / 6, // 30 degrees pitch (Bird's Eye)
-      viewRotationY: 0,
+      viewRotationY: 0,       // We rotate the skeleton points manually, so view rotation is 0
       viewZoom: 1.0,
       cameraHeightOffset: 0.0,
     );
@@ -282,7 +351,7 @@ class LegacyMotionStrategy implements MotionStrategy {
     controller.skeleton.rHand = rHand;
 
     // Global Rotation
-    double renderAngle = controller.facingAngle;
+    double renderAngle = controller.facingAngle + (pi / 2);
     if (controller.isAttacking && (attackType == AttackType.kick || controller.weaponType == WeaponType.none)) {
       double kickProgress = (controller.attackTimer / 0.3);
       renderAngle += kickProgress * pi * 2;

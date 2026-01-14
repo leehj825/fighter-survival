@@ -1,7 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' as v;
-import 'package:stickman_3d/stickman_3d.dart';
+import 'package:stickman_3d/stickman_3d.dart' hide CameraView, AxisMode;
 
 // Axis Mode Enum (Used in Editor too)
 enum AxisMode { none, x, y, z }
