@@ -111,7 +111,9 @@ class StickmanAnimator {
 
     // Manual rotation fix for Animate Mode
     if (controller.mode == EditorMode.animate) {
-       final rotY = v.Matrix3.rotationY(controller.facingAngle);
+       // Offset by 90 degrees (pi/2) because standard stickman faces Front (Z+)
+       // but movement angle 0 is Right (X+).
+       final rotY = v.Matrix3.rotationY(controller.facingAngle + (pi / 2));
        for (var p in controller.skeleton.allPoints) {
           p.setFrom(rotY.transform(p));
        }
