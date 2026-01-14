@@ -52,6 +52,7 @@ class StickmanAnimator {
 
   set isAttacking(bool value) => controller.isAttacking = value;
   set weaponType(WeaponType value) => controller.weaponType = value;
+  bool get isPlaying => controller.isPlaying;
 
   void _parseData(String data) {
     try {
@@ -64,7 +65,7 @@ class StickmanAnimator {
           // SPEED HACK: Increase speed of specific animations per user request
           // Updated names to match asset file: "Shooting Arrow"
           if (clip.name == "Hurricane Kick" || clip.name == "Shooting Arrow" || clip.name == "Shoot" || clip.name == "Kicking") {
-             double multiplier = (clip.name == "Shooting Arrow") ? 3.0 : 2.0;
+             double multiplier = (clip.name == "Shooting Arrow") ? 5.0 : 2.0;
              clip = StickmanClip(
                 name: clip.name,
                 keyframes: clip.keyframes,

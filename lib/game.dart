@@ -1197,6 +1197,7 @@ class ShooterEnemy extends Enemy {
   double _shootTimer = 0.0;
   bool _isShooting = false;
   double _shootingAnimationTimer = 0.0;
+  bool _hasFired = false;
 
   ShooterEnemy() : super();
 
@@ -1226,7 +1227,12 @@ class ShooterEnemy extends Enemy {
 
     if (_isShooting) {
        _shootingAnimationTimer += dt;
-       if (_shootingAnimationTimer > 0.6) {
+       // Wait for animation to finish or timeout
+       if (!_animator.isPlaying || _shootingAnimationTimer > 0.8) {
+          if (!_hasFired) {
+             gameRef.world.add(ArrowProjectile(position, gameRef.player.position));
+             _hasFired = true;
+          }
           _isShooting = false;
        }
     } else {
@@ -1256,12 +1262,11 @@ class ShooterEnemy extends Enemy {
          _shootTimer = 0.0;
          _isShooting = true;
          _shootingAnimationTimer = 0.0;
+         _hasFired = false;
 
          // Trigger attack anim
          // Correct name from file is "Shooting Arrow"
          _animator.play("Shooting Arrow");
-
-         gameRef.world.add(ArrowProjectile(position, gameRef.player.position));
       }
     }
 
