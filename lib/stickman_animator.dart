@@ -61,20 +61,21 @@ class StickmanAnimator {
         for (final clipData in clipsList) {
           var clip = StickmanClip.fromJson(clipData);
 
-          // SPEED HACK: Double the speed of specific animations
+          // SPEED HACK: Increase speed of specific animations per user request
           // Updated names to match asset file: "Shooting Arrow"
           if (clip.name == "Hurricane Kick" || clip.name == "Shooting Arrow" || clip.name == "Shoot" || clip.name == "Kicking") {
+             double multiplier = (clip.name == "Shooting Arrow") ? 3.0 : 2.0;
              clip = StickmanClip(
                 name: clip.name,
                 keyframes: clip.keyframes,
-                fps: clip.fps * 2, // Double speed
+                fps: clip.fps * multiplier,
                 isLooping: clip.isLooping
              );
           } else if (clip.name == "Hook Punch") {
              clip = StickmanClip(
                 name: clip.name,
                 keyframes: clip.keyframes,
-                fps: 90.0, // High speed for dash
+                fps: 120.0, // Increased from 90 to 120 for faster punch/dash
                 isLooping: clip.isLooping
              );
           }
