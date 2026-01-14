@@ -58,8 +58,8 @@ class StickmanAnimator {
         for (final clipData in clipsList) {
           var clip = StickmanClip.fromJson(clipData);
 
-          // SPEED HACK: Double the speed of the Hurricane Kick animation
-          if (clip.name == "Hurricane Kick") {
+          // SPEED HACK: Double the speed of specific animations
+          if (clip.name == "Hurricane Kick" || clip.name == "Bow Shoot" || clip.name == "Shoot") {
              clip = StickmanClip(
                 name: clip.name,
                 keyframes: clip.keyframes,
@@ -87,6 +87,12 @@ class StickmanAnimator {
     }
   }
 
+  void stopAnimation() {
+    controller.activeClip = null;
+    controller.isPlaying = false;
+    controller.setMode(EditorMode.pose); // Use 'pose' mode which maps to legacy procedural in update logic
+  }
+
   void update(double dt, Vector2 velocity, bool isDashing) {
     // Legacy/Procedural Mode Fallback
     if (controller.mode != EditorMode.animate || _clips.isEmpty) {
@@ -95,6 +101,14 @@ class StickmanAnimator {
 
     // Pass velocity to controller for direction calculation
     controller.update(dt, velocity.x, velocity.y);
+
+    // Manual rotation fix for Animate Mode
+    if (controller.mode == EditorMode.animate) {
+       final rotY = v.Matrix3.rotationY(controller.facingAngle);
+       for (var p in controller.skeleton.allPoints) {
+          p.setFrom(rotY.transform(p));
+       }
+    }
   }
 
   void render(Canvas canvas, Vector2 position, double height, {bool isDashing = false}) {

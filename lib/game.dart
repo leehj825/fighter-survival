@@ -949,7 +949,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     // Choose color/scale based on type
     Color c = Colors.redAccent;
     double s = 1.0;
-    WeaponType w = WeaponType.sword; // Default enemy has sword
+    WeaponType w = WeaponType.none; // Default Red Enemy uses Fist
 
     if (isElite) {
       c = Colors.deepPurpleAccent;
@@ -1011,11 +1011,19 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       }
     }
 
-    // Play animations based on movement
-    if (velocity.length > 10) {
-       _animator.play("Standard Run");
+    // Attack Logic (Melee)
+    double distToPlayer = position.distanceTo(gameRef.player.position);
+    if (distToPlayer < size.x + 10) {
+       _animator.isAttacking = true;
+       _animator.stopAnimation(); // Switch to procedural punch
     } else {
-       _animator.play("Standard Idle");
+       _animator.isAttacking = false;
+       // Play animations based on movement
+       if (velocity.length > 10) {
+          _animator.play("Standard Run");
+       } else {
+          _animator.play("Standard Idle");
+       }
     }
 
     // Update Animator with velocity
@@ -1184,6 +1192,8 @@ class ArrowProjectile extends EnemyProjectile {
 
 class ShooterEnemy extends Enemy {
   double _shootTimer = 0.0;
+  bool _isShooting = false;
+  double _shootingAnimationTimer = 0.0;
 
   ShooterEnemy() : super();
 
@@ -1211,33 +1221,53 @@ class ShooterEnemy extends Enemy {
 
     Vector2 velocity = Vector2.zero();
 
-    if (_knockbackVelocity.length > 5) {
-      velocity = _knockbackVelocity;
-      position.add(velocity * dt);
-      _knockbackVelocity.scale(0.9);
+    if (_isShooting) {
+       _shootingAnimationTimer += dt;
+       if (_shootingAnimationTimer > 0.6) {
+          _isShooting = false;
+       }
     } else {
-      _knockbackVelocity.setZero();
+      if (_knockbackVelocity.length > 5) {
+        velocity = _knockbackVelocity;
+        position.add(velocity * dt);
+        _knockbackVelocity.scale(0.9);
+      } else {
+        _knockbackVelocity.setZero();
 
-      // Custom movement: maintain distance
-      double dist = position.distanceTo(gameRef.player.position);
-      Vector2 dir = (gameRef.player.position - position).safeNormalized();
+        // Custom movement: maintain distance
+        double dist = position.distanceTo(gameRef.player.position);
+        Vector2 dir = (gameRef.player.position - position).safeNormalized();
 
-      if (dist < 300) {
-         velocity = -dir * 80; // Retreat
-      } else if (dist > 500) {
-         velocity = dir * 100; // Chase
+        if (dist < 300) {
+           velocity = -dir * 80; // Retreat
+        } else if (dist > 500) {
+           velocity = dir * 100; // Chase
+        }
+
+        position.add(velocity * dt);
       }
 
-      position.add(velocity * dt);
+      // Shoot Logic
+      _shootTimer += dt;
+      if (_shootTimer > 2.0) {
+         _shootTimer = 0.0;
+         _isShooting = true;
+         _shootingAnimationTimer = 0.0;
+
+         // Trigger attack anim
+         // Try "Bow Shoot" or fallback
+         _animator.play("Bow Shoot");
+
+         gameRef.world.add(ArrowProjectile(position, gameRef.player.position));
+      }
     }
 
-    // Shoot Logic
-    _shootTimer += dt;
-    if (_shootTimer > 2.0) {
-       _shootTimer = 0.0;
-       // Trigger attack anim
-       _animator.isAttacking = true;
-       gameRef.world.add(ArrowProjectile(position, gameRef.player.position));
+    if (!_isShooting) {
+        if (velocity.length > 10) {
+           _animator.play("Standard Run");
+        } else {
+           _animator.play("Standard Idle");
+        }
     }
 
     // Update Animator
@@ -1376,7 +1406,7 @@ class MagnetItem extends PositionComponent {
 
 class HurricaneKickEffect extends PositionComponent {
   double _lifeTime = 0.0;
-  static const double _duration = 0.15; // Twice faster (was 0.3)
+  static const double _duration = 0.5; // Increased duration
   final Paint _paint = Paint()
     ..style = PaintingStyle.stroke
     ..strokeWidth = 3.0
