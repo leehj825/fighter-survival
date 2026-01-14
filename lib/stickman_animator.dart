@@ -55,7 +55,18 @@ class StickmanAnimator {
       if (json is Map<String, dynamic> && json.containsKey('clips')) {
         final List<dynamic> clipsList = json['clips'];
         for (final clipData in clipsList) {
-          final clip = StickmanClip.fromJson(clipData);
+          var clip = StickmanClip.fromJson(clipData);
+
+          // SPEED HACK: Double the speed of the Hurricane Kick animation
+          if (clip.name == "Hurricane Kick") {
+             clip = StickmanClip(
+                name: clip.name,
+                keyframes: clip.keyframes,
+                fps: clip.fps * 2, // Double speed
+                isLooping: clip.isLooping
+             );
+          }
+
           _clips[clip.name] = clip;
         }
       }

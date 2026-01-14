@@ -1353,7 +1353,7 @@ class MagnetItem extends PositionComponent {
 
 class HurricaneKickEffect extends PositionComponent {
   double _lifeTime = 0.0;
-  static const double _duration = 0.3;
+  static const double _duration = 0.15; // Twice faster (was 0.3)
   final Paint _paint = Paint()
     ..style = PaintingStyle.stroke
     ..strokeWidth = 3.0
