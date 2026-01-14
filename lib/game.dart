@@ -732,7 +732,11 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
       position.add(velocity * dt);
 
       if (_dashTimer % 0.05 < dt) {
-         gameRef.world.add(VisualEffects.createDashTrail(position, angle));
+         double dashAngle = 0;
+         if (_dashDirection != Vector2.zero()) {
+             dashAngle = atan2(_dashDirection.y, _dashDirection.x);
+         }
+         gameRef.world.add(VisualEffects.createDashTrail(position, dashAngle));
       }
       if (_dashTimer <= 0) {
         isDashing = false;
