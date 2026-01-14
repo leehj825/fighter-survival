@@ -81,11 +81,7 @@ class StickmanAnimator {
         _legacyStrategy?.isDashing = isDashing;
     }
 
-    // Pass negated Y velocity to match coordinate systems if needed, or rely on internal logic
-    // StickmanController expects Y+ as down (2D screen), but typically 3D libs use Y+ up or Z+ up.
-    // The library seems to use Y+ as UP in 3D logic internally for some things, but let's check.
-    // Actually, StickmanController uses velocity for `atan2` to set `_facingAngle`.
-    // We just pass it through.
+    // Pass velocity to controller for direction calculation
     controller.update(dt, velocity.x, velocity.y);
   }
 
@@ -93,12 +89,13 @@ class StickmanAnimator {
     canvas.save();
     canvas.translate(position.x, position.y);
 
+    // Render with Pseudo-3D Bird's Eye Projection
     final painter = StickmanPainter(
       controller: controller,
       color: color,
-      cameraView: CameraView.free, // Use free camera for 3D perspective
-      viewRotationX: -pi / 6, // Tilt camera down (Bird's Eye) - approx 30 degrees
-      viewRotationY: 0,       // No yaw rotation, face forward
+      cameraView: CameraView.free,
+      viewRotationX: -pi / 6, // 30 degrees pitch (Bird's Eye)
+      viewRotationY: 0,
       viewZoom: 1.0,
       cameraHeightOffset: 0.0,
     );

@@ -760,13 +760,14 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
       gameRef.gridBackground.isVisible = true; // Show grid otherwise
 
       if (velocity.length > 10 || isDashing) {
-         // User requested "Standard Running", but file contains "Standard Run"
+         // Play "Standard Running" (mapped to "Standard Run" in file)
          _animator.play("Standard Run");
       } else {
          _animator.play("Standard Idle");
       }
     }
 
+    // Pass velocity to animator for direction calculation (3D facing)
     _animator.update(dt, velocity, isDashing);
   }
 
