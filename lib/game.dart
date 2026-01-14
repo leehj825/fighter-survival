@@ -156,7 +156,6 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
 
   late World world;
   late CameraComponent cameraComponent;
-  late GridBackground gridBackground;
 
   @override
   Future<void> onLoad() async {
@@ -189,10 +188,6 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     if (GameData().levelShield > 0) {
       world.add(OrbitalShield(player));
     }
-
-    // Add Infinite Background (Grid)
-    gridBackground = GridBackground();
-    world.add(gridBackground);
 
     // Spawn Obstacles (Rough background elements)
     _spawnObstacles();
@@ -755,16 +750,11 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     // Animation Logic
     if (isSlashing) {
       _animator.play("Hurricane Kick");
-      gameRef.gridBackground.isVisible = false; // Hide grid during attack
+    } else if (velocity.length > 10 || isDashing) {
+      // Play "Standard Running" (mapped to "Standard Run" in file)
+      _animator.play("Standard Run");
     } else {
-      gameRef.gridBackground.isVisible = true; // Show grid otherwise
-
-      if (velocity.length > 10 || isDashing) {
-         // Play "Standard Running" (mapped to "Standard Run" in file)
-         _animator.play("Standard Run");
-      } else {
-         _animator.play("Standard Idle");
-      }
+      _animator.play("Standard Idle");
     }
 
     // Pass velocity to animator for direction calculation (3D facing)
