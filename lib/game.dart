@@ -747,13 +747,14 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     _animator.isAttacking = isSlashing;
 
     // Animation Logic
+    // Animation Logic
     if (isDashing) {
       _animator.play("Hook Punch");
     } else if (isSlashing) {
       _animator.play("Hurricane Kick");
     } else if (velocity.length > 10) {
-      // Play "Standard Running" (mapped to "Standard Run" in file)
-      _animator.play("Standard Run");
+      // Play "Running" (File name matches asset)
+      _animator.play("Running");
     } else {
       _animator.play("Standard Idle");
     }
@@ -1022,7 +1023,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
        _animator.isAttacking = false;
        // Play animations based on movement
        if (velocity.length > 10) {
-          _animator.play("Standard Run");
+       _animator.play("Running"); // Mapped to "Standard Run" intent but file uses "Running"
        } else {
           _animator.play("Standard Idle");
        }
@@ -1257,8 +1258,8 @@ class ShooterEnemy extends Enemy {
          _shootingAnimationTimer = 0.0;
 
          // Trigger attack anim
-         // Try "Bow Shoot" or fallback
-         _animator.play("Bow Shoot");
+         // Correct name from file is "Shooting Arrow"
+         _animator.play("Shooting Arrow");
 
          gameRef.world.add(ArrowProjectile(position, gameRef.player.position));
       }
@@ -1266,7 +1267,8 @@ class ShooterEnemy extends Enemy {
 
     if (!_isShooting) {
         if (velocity.length > 10) {
-           _animator.play("Standard Run");
+           // Use Running for movement if Walk is missing or for consistency
+           _animator.play("Running");
         } else {
            _animator.play("Standard Idle");
         }
