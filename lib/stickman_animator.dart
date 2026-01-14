@@ -66,6 +66,13 @@ class StickmanAnimator {
                 fps: clip.fps * 2, // Double speed
                 isLooping: clip.isLooping
              );
+          } else if (clip.name == "Hook Punch") {
+             clip = StickmanClip(
+                name: clip.name,
+                keyframes: clip.keyframes,
+                fps: 90.0, // High speed for dash
+                isLooping: clip.isLooping
+             );
           }
 
           _clips[clip.name] = clip;

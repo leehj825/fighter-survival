@@ -747,9 +747,11 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     _animator.isAttacking = isSlashing;
 
     // Animation Logic
-    if (isSlashing) {
+    if (isDashing) {
+      _animator.play("Hook Punch");
+    } else if (isSlashing) {
       _animator.play("Hurricane Kick");
-    } else if (velocity.length > 10 || isDashing) {
+    } else if (velocity.length > 10) {
       // Play "Standard Running" (mapped to "Standard Run" in file)
       _animator.play("Standard Run");
     } else {
