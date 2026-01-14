@@ -5,6 +5,7 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'package:stickman_3d/stickman_3d.dart';
 import 'package:vector_math/vector_math_64.dart' as v;
+import 'custom_stickman_painter.dart';
 
 export 'package:stickman_3d/stickman_3d.dart' show WeaponType;
 
@@ -100,8 +101,8 @@ class StickmanAnimator {
     canvas.save();
     canvas.translate(position.x, position.y);
 
-    // Render with Pseudo-3D Bird's Eye Projection
-    final painter = StickmanPainter(
+    // Render with Pseudo-3D Bird's Eye Projection using CustomStickmanPainter (No Grid)
+    final painter = CustomStickmanPainter(
       controller: controller,
       color: color,
       cameraView: CameraView.free,

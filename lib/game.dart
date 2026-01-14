@@ -156,11 +156,15 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
 
   late World world;
   late CameraComponent cameraComponent;
+  String? animationData;
 
   @override
   Future<void> onLoad() async {
     // Ensure music is playing (but don't restart if it is)
     SoundService.instance.playBackgroundMusic('audio/main2.mp3');
+
+    // Load Animation Data Once
+    animationData = await assets.readFile('data/fighter_animations.sap');
 
     // Create World
     world = World();
@@ -696,18 +700,13 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     health = maxHealth;
     dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
 
-    // 1. Load the .sap file string/data from assets
-    // Note: Adjust this line based on how your library expects to receive data
-    // (e.g., if it takes a file path or the actual JSON/String content)
-    String animationData = await gameRef.assets.readFile('data/fighter_animations.sap');
-
-    // 2. Initialize the animator with the loaded data
+    // Initialize the animator with the loaded data from GameRef
     _animator = StickmanAnimator(
       color: Colors.cyanAccent,
       scale: 1.2,
       attackType: AttackType.kick,
       weaponType: WeaponType.none,
-      data: animationData // Pass the loaded data here
+      data: gameRef.animationData // Pass the loaded data here
     );
 
     // Set default animation
@@ -962,7 +961,16 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       c = Colors.white.withOpacity(0.5);
     }
 
-    _animator = StickmanAnimator(color: c, scale: s, weaponType: w);
+    // Initialize Animator with shared data
+    _animator = StickmanAnimator(
+      color: c,
+      scale: s,
+      weaponType: w,
+      data: gameRef.animationData
+    );
+
+    // Set default animation
+    _animator.play("Standard Idle");
   }
 
   @override
@@ -1001,6 +1009,13 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
           position.add(velocity * dt);
         }
       }
+    }
+
+    // Play animations based on movement
+    if (velocity.length > 10) {
+       _animator.play("Standard Run");
+    } else {
+       _animator.play("Standard Idle");
     }
 
     // Update Animator with velocity
@@ -1176,7 +1191,15 @@ class ShooterEnemy extends Enemy {
   Future<void> onLoad() async {
     await super.onLoad();
     // Override color/scale for Shooter and set weapon to Bow
-    _animator = StickmanAnimator(color: Colors.purpleAccent, scale: 1.0, weaponType: WeaponType.bow);
+    // We need to re-initialize or modify properties. Since _animator is late, super.onLoad initialized it.
+    // We can just create a new one with correct color/weapon and DATA.
+    _animator = StickmanAnimator(
+      color: Colors.purpleAccent,
+      scale: 1.0,
+      weaponType: WeaponType.bow,
+      data: gameRef.animationData
+    );
+    _animator.play("Standard Idle");
   }
 
   @override
