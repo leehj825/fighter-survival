@@ -126,8 +126,6 @@ class StickmanAnimator {
     // 2. Legacy/Procedural Mode Fallback
     if (controller.mode != EditorMode.animate || _clips.isEmpty) {
         _legacyStrategy?.isDashing = isDashing;
-        // Sync controller angle so legacy strategy works too
-        controller.facingAngle = _facingAngle;
     }
 
     // 3. Update Controller
