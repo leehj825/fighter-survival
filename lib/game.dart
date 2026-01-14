@@ -102,10 +102,34 @@ class ActionButton extends PositionComponent {
   void render(Canvas canvas) {
     canvas.drawCircle(Offset(size.x / 2, size.y / 2), size.x / 2, _bgPaint);
     canvas.drawCircle(Offset(size.x / 2, size.y / 2), size.x / 2, _strokePaint);
-    _textPainter.paint(
-      canvas,
-      Offset((size.x - _textPainter.width) / 2, (size.y - _textPainter.height) / 2),
-    );
+
+    // Draw Whirlwind Icon instead of Text
+    if (label == "SLASH") {
+       final Paint iconPaint = Paint()
+         ..color = Colors.white.withOpacity(0.9)
+         ..style = PaintingStyle.stroke
+         ..strokeWidth = 3.0
+         ..strokeCap = StrokeCap.round;
+
+       canvas.save();
+       canvas.translate(size.x / 2, size.y / 2);
+       // Simple spiral
+       for(int i=0; i<2; i++) {
+          canvas.drawArc(
+            Rect.fromCircle(center: Offset.zero, radius: 10 + (i * 8.0)),
+            0.5 + (i * 1.0),
+            4.0,
+            false,
+            iconPaint
+          );
+       }
+       canvas.restore();
+    } else {
+      _textPainter.paint(
+        canvas,
+        Offset((size.x - _textPainter.width) / 2, (size.y - _textPainter.height) / 2),
+      );
+    }
   }
 }
 
@@ -1284,7 +1308,14 @@ class ShooterEnemy extends Enemy {
     }
 
     // Update Animator
-    _animator.update(dt, velocity, false);
+    // If shooting, force facing towards player
+    if (_isShooting) {
+       Vector2 faceDir = (gameRef.player.position - position).safeNormalized();
+       // Pass a fake velocity so animator rotates to face player
+       _animator.update(dt, faceDir * 100, false);
+    } else {
+       _animator.update(dt, velocity, false);
+    }
   }
 }
 

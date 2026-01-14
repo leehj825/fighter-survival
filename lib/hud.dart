@@ -13,7 +13,7 @@ class Hud extends PositionComponent with HasGameRef<RpgGame> {
 
   final TextComponent storyText = TextComponent(
     text: '',
-    anchor: Anchor.bottomCenter,
+    anchor: Anchor.topCenter, // Changed from bottomCenter
     textRenderer: TextPaint(
       style: TextStyle(
         color: Colors.yellowAccent,
@@ -54,7 +54,7 @@ class Hud extends PositionComponent with HasGameRef<RpgGame> {
   @override
   void onGameResize(Vector2 size) {
     super.onGameResize(size);
-    storyText.position = Vector2(size.x / 2, size.y - 50);
+    storyText.position = Vector2(size.x / 2, 80); // Moved to top, under bars
     bossWarningText.position = size / 2;
   }
 
