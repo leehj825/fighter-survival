@@ -1,103 +1,227 @@
+import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
+import 'package:stickman_3d/stickman_3d.dart' hide CameraView, StickmanPainter;
+import 'package:vector_math/vector_math_64.dart' as v;
+import 'custom_stickman_painter.dart';
 
-enum WeaponType { none, sword, axe, bow }
+export 'package:stickman_3d/stickman_3d.dart' show WeaponType;
+
 enum AttackType { punch, kick, bow, sword, axe }
 
-/// A class that procedurally animates a stickman in pseudo-3D
+/// A wrapper around StickmanController to maintain compatibility with the Game's API
+/// and provide legacy procedural animation fallback.
 class StickmanAnimator {
+  final StickmanController controller;
   final Color color;
-  final double scale;
-  final WeaponType weaponType;
-  AttackType attackType;
 
-  // Animation State
-  double _time = 0.0;
-  double _runWeight = 0.0; // 0.0 = Idle, 1.0 = Running
+  AttackType _attackType = AttackType.punch;
+  LegacyMotionStrategy? _legacyStrategy;
+  final Map<String, StickmanClip> _clips = {};
 
-  // 3D Rotation State (Facing Direction)
+  // NEW: Track facing angle manually since Controller ignores it during animation
   double _facingAngle = 0.0;
-
-  // Actions
-  bool isAttacking = false;
-  double _attackTimer = 0.0;
-
-  // Dash State
-  double _dashTimer = 0.0;
-  bool _wasDashing = false;
 
   StickmanAnimator({
     this.color = Colors.white,
-    this.scale = 1.0,
-    this.weaponType = WeaponType.none,
-    this.attackType = AttackType.punch
-  });
+    double scale = 1.0,
+    WeaponType weaponType = WeaponType.none,
+    AttackType attackType = AttackType.punch,
+    String? data,
+  }) : controller = StickmanController(scale: scale, weaponType: weaponType) {
+    _attackType = attackType;
+
+    // Use Legacy Strategy by default to preserve original look
+    _legacyStrategy = LegacyMotionStrategy();
+    _legacyStrategy!.attackType = attackType;
+    controller.setStrategy(_legacyStrategy!);
+
+    if (data != null) {
+      _parseData(data);
+    }
+  }
+
+  set attackType(AttackType type) {
+    _attackType = type;
+    _legacyStrategy?.attackType = type;
+  }
+
+  AttackType get attackType => _attackType;
+
+  set isAttacking(bool value) => controller.isAttacking = value;
+  set weaponType(WeaponType value) => controller.weaponType = value;
+  bool get isPlaying => controller.isPlaying;
+
+  void _parseData(String data) {
+    try {
+      final json = jsonDecode(data);
+      if (json is Map<String, dynamic> && json.containsKey('clips')) {
+        final List<dynamic> clipsList = json['clips'];
+        for (final clipData in clipsList) {
+          var clip = StickmanClip.fromJson(clipData);
+
+          // SPEED HACK: Increase speed of specific animations per user request
+          // Updated names to match asset file: "Shooting Arrow"
+          if (clip.name == "Hurricane Kick" || clip.name == "Shooting Arrow" || clip.name == "Shoot" || clip.name == "Kicking") {
+             double multiplier = (clip.name == "Shooting Arrow") ? 5.0 : 2.0;
+             clip = StickmanClip(
+                name: clip.name,
+                keyframes: clip.keyframes,
+                fps: clip.fps * multiplier,
+                isLooping: clip.isLooping
+             );
+          } else if (clip.name == "Hook Punch") {
+             clip = StickmanClip(
+                name: clip.name,
+                keyframes: clip.keyframes,
+                fps: 120.0, // Increased from 90 to 120 for faster punch/dash
+                isLooping: clip.isLooping
+             );
+          }
+
+          _clips[clip.name] = clip;
+          // Alias 'Hook Punch' to 'Kicking' to satisfy usage requirements even if asset is named differently
+          if (clip.name == "Hook Punch") {
+             _clips["Kicking"] = clip;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error parsing animation data: $e');
+    }
+  }
+
+  void play(String animationName) {
+    if (_clips.containsKey(animationName)) {
+      if (controller.activeClip?.name == animationName && controller.isPlaying) return;
+
+      controller.activeClip = _clips[animationName];
+      controller.currentFrameIndex = 0;
+      controller.setMode(EditorMode.animate);
+      controller.isPlaying = true;
+    }
+  }
+
+  void stopAnimation() {
+    if (controller.mode == EditorMode.animate) {
+      controller.activeClip = null;
+      controller.isPlaying = false;
+      controller.setMode(EditorMode.pose); // Use 'pose' mode which maps to legacy procedural in update logic
+    }
+  }
 
   void update(double dt, Vector2 velocity, bool isDashing) {
-    _time += dt * 10; // Animation Speed
+    // 1. Calculate Target Angle based on Velocity
+    if (velocity.length > 1.0) { // Only turn if moving
+      // Use atan2(-y, x) to fix Up/Down inversion (Up is negative Y in Flame)
+      double target = atan2(-velocity.y, velocity.x);
 
-    // Update Dash Timer
-    if (isDashing) {
-      if (!_wasDashing) _dashTimer = 0.0; // Reset on start
-      _dashTimer += dt;
-    } else {
-      _dashTimer = 0.0;
-    }
-    _wasDashing = isDashing;
-
-    // Determine Run Weight based on speed
-    double speed = velocity.length;
-    double targetWeight = speed > 10 ? 1.0 : 0.0;
-    _runWeight += (targetWeight - _runWeight) * dt * 5;
-
-    // Determine Facing Angle
-    if (speed > 10) {
-      // Adjusted offset to -pi/2 (-90 degrees) to fix Left/Right swap
-      // Invert Y velocity to fix Up/Down swap
-      double targetAngle = atan2(-velocity.y, velocity.x) - pi / 2;
-      double diff = targetAngle - _facingAngle;
+      // Smooth Rotation (Lerp)
+      // Shortest angle interpolation
+      double diff = target - _facingAngle;
       while (diff < -pi) diff += 2 * pi;
       while (diff > pi) diff -= 2 * pi;
-      _facingAngle += diff * dt * 10;
+
+      _facingAngle += diff * (dt * 10); // Turn speed 10
     }
 
-    if (isAttacking) {
-      _attackTimer += dt;
-      if (_attackTimer > 0.3) {
-        isAttacking = false;
-        _attackTimer = 0.0;
-      }
+    // 2. Legacy/Procedural Mode Fallback
+    if (controller.mode != EditorMode.animate || _clips.isEmpty) {
+        _legacyStrategy?.isDashing = isDashing;
+        _legacyStrategy?.facingAngle = _facingAngle; // Sync manual angle to legacy strategy
+    }
+
+    // 3. Update Controller
+    // For Animate mode, we pass 0 velocity because we handle rotation manually.
+    // For Legacy mode, we might want procedural running?
+    // The provided snippet suggests forcing manual angle calculation.
+    // If we pass 0, procedural running weight decays.
+    // However, the user explicitly requested: "controller.update(dt, 0, 0);" in previous steps for fixing rotation lock.
+    // And "LegacyMotionStrategy" in this file uses "controller.runWeight".
+    // If we pass 0, runWeight becomes 0.
+    // BUT: "Red Enemy uses procedural punch (attack). But that's stationary".
+    // So Legacy movement is likely not critical for running if "Standard Run" clip is used.
+
+    controller.update(dt, 0, 0);
+
+    // 4. MANUAL ROTATION FIX
+    // Apply the rotation to the skeleton points manually
+    // This ensures rotation happens regardless of whether we are playing a clip or not
+    // User requested "when controller.mode == EditorMode.animate".
+    // But if we use (0,0) update, controller won't rotate in legacy either.
+    // So we should apply rotation always if we want smooth turning in legacy too?
+    // Or just rely on Legacy fallback syncing `controller.facingAngle = _facingAngle`?
+    // If we passed 0,0, controller won't update facingAngle. So syncing is good.
+    // But legacy strategy rotates points based on `controller.facingAngle`.
+    // So for legacy, step 2 `controller.facingAngle = _facingAngle` is sufficient.
+
+    // For Animate mode, the Controller/Clip overwrites points. So we must rotate AFTER update.
+    if (controller.mode == EditorMode.animate) {
+       // Offset by 90 degrees (pi/2) because standard stickman faces Front (Z+)
+       // but movement angle 0 is Right (X+).
+       final rotY = v.Matrix3.rotationY(_facingAngle + (pi / 2));
+       for (var p in controller.skeleton.allPoints) {
+         p.setFrom(rotY.transform(p));
+       }
     }
   }
 
   void render(Canvas canvas, Vector2 position, double height, {bool isDashing = false}) {
     canvas.save();
     canvas.translate(position.x, position.y);
-    canvas.scale(scale);
 
-    final Paint paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.0
-      ..strokeCap = StrokeCap.round;
+    // Render with Pseudo-3D Bird's Eye Projection using CustomStickmanPainter (No Grid)
+    final painter = CustomStickmanPainter(
+      controller: controller,
+      color: color,
+      cameraView: CameraView.free,
+      viewRotationX: -pi / 6, // 30 degrees pitch (Bird's Eye)
+      viewRotationY: 0,       // We rotate the skeleton points manually, so view rotation is 0
+      viewZoom: 1.0,
+      cameraHeightOffset: 0.0,
+    );
 
-    final Paint fillPaint = Paint()..color = color..style = PaintingStyle.fill;
+    painter.paint(canvas, Size.zero);
+    canvas.restore();
+  }
+}
 
-    // --- 1. BASE SKELETON (Local Space) ---
-    Vector3 hip = Vector3(0, 0, 0);
-    Vector3 neck = Vector3(0, -25, 0);
+/// Implements the original procedural animation logic using the new library's skeleton
+class LegacyMotionStrategy implements MotionStrategy {
+  AttackType attackType = AttackType.punch;
+  bool isDashing = false;
+  bool _wasDashing = false;
+  double _dashTimer = 0.0;
+  double facingAngle = 0.0; // Synced from StickmanAnimator
+
+  @override
+  void update(double dt, StickmanController controller) {
+    // --- 1. Update Custom State ---
+    if (isDashing) {
+      if (!_wasDashing) _dashTimer = 0.0;
+      _dashTimer += dt;
+    } else {
+      _dashTimer = 0.0;
+    }
+    _wasDashing = isDashing;
+
+    // --- 2. Calculate Skeleton (Copied from old logic) ---
+
+    // Reset Root
+    controller.skeleton.hip.setValues(0, 0, 0);
 
     // Breathing / Bobbing
-    double breath = sin(_time * 0.5) * 1.0;
-    neck.y += breath * (1 - _runWeight);
-    neck.y += sin(_time).abs() * 3.0 * _runWeight;
+    double breath = sin(controller.time * 0.5) * 1.0;
+    v.Vector3 neck = v.Vector3(0, -25, 0);
+    neck.y += breath * (1 - controller.runWeight);
+    neck.y += sin(controller.time).abs() * 3.0 * controller.runWeight;
 
-    // LEAN FORWARD (Running/Dashing)
-    if (_runWeight > 0.1 || _wasDashing) {
-       double leanAmount = 0.15 * _runWeight;
-       if (_wasDashing) leanAmount = 0.9; // Deep lean for dash
+    // LEAN FORWARD
+    if (controller.runWeight > 0.1 || _wasDashing) {
+       double leanAmount = 0.15 * controller.runWeight;
+       if (_wasDashing) leanAmount = 0.9;
 
        double ny = neck.y * cos(leanAmount) - neck.z * sin(leanAmount);
        double nz = neck.y * sin(leanAmount) + neck.z * cos(leanAmount);
@@ -106,103 +230,93 @@ class StickmanAnimator {
     }
 
     // BODY LEAN (Whirlwind Kick)
-    // Lean Upper Body Opposite to Kick (Lean Left)
-    if (isAttacking && (attackType == AttackType.kick || weaponType == WeaponType.none)) {
-        double kickProgress = (_attackTimer / 0.3);
-        // Peak lean at middle of animation
+    if (controller.isAttacking && (attackType == AttackType.kick || controller.weaponType == WeaponType.none)) {
+        double kickProgress = (controller.attackTimer / 0.3);
         double lean = sin(kickProgress * pi) * -8.0;
         neck.x += lean;
     }
 
-    // Shoulders (Centered at Neck)
-    Vector3 lShoulder = Vector3(0, neck.y, neck.z);
-    Vector3 rShoulder = Vector3(0, neck.y, neck.z);
+    // Set Neck
+    controller.skeleton.neck.setFrom(neck);
+    controller.skeleton.setHead(neck + v.Vector3(0, -8, 0)); // Helper to set head
 
-    // Hips (Centered)
-    Vector3 lHip = Vector3(0, 0, 0);
-    Vector3 rHip = Vector3(0, 0, 0);
-
-    // --- 2. LIMB ANIMATION ---
-    double legSwing = sin(_time) * 0.8 * _runWeight;
-    double armSwing = cos(_time) * 0.8 * _runWeight;
+    // --- LIMBS ---
+    double legSwing = sin(controller.time) * 0.8 * controller.runWeight;
+    double armSwing = cos(controller.time) * 0.8 * controller.runWeight;
 
     if (_wasDashing) {
        legSwing = 1.0;
        armSwing = 0.0;
     }
 
-    // LEGS (Triangular /\ )
-    Vector3 lKnee = _rotateX(Vector3(-3, 12, 0), legSwing) + lHip;
-    Vector3 rKnee = _rotateX(Vector3(3, 12, 0), -legSwing) + rHip;
-    Vector3 lFoot = _rotateX(Vector3(-3, 12, 0), legSwing + 0.2) + lKnee;
-    Vector3 rFoot = _rotateX(Vector3(3, 12, 0), -legSwing + 0.2) + rKnee;
-
-    // Kick Override
-    if (isAttacking && (attackType == AttackType.kick || weaponType == WeaponType.none)) {
-        // Fixed leg pose relative to spinning body
-        // High kick pose (lower Y value = higher up)
-        // Leg extended to the side/front in local space
-        rKnee = rHip + Vector3(10, -5, 5);
-        rFoot = rKnee + Vector3(12, -2, 2);
+    v.Vector3 rotateX(v.Vector3 vec, double angle) {
+      final c = cos(angle);
+      final s = sin(angle);
+      return v.Vector3(vec.x, vec.y * c - vec.z * s, vec.y * s + vec.z * c);
     }
 
-    // ARMS (Triangular \/ )
+    // Legs
+    v.Vector3 lKnee = rotateX(v.Vector3(-3, 12, 0), legSwing) + controller.skeleton.hip;
+    v.Vector3 rKnee = rotateX(v.Vector3(3, 12, 0), -legSwing) + controller.skeleton.hip;
+    v.Vector3 lFoot = rotateX(v.Vector3(-3, 12, 0), legSwing + 0.2) + lKnee;
+    v.Vector3 rFoot = rotateX(v.Vector3(3, 12, 0), -legSwing + 0.2) + rKnee;
+
+    // Kick Override
+    if (controller.isAttacking && (attackType == AttackType.kick || controller.weaponType == WeaponType.none)) {
+        rKnee = controller.skeleton.hip + v.Vector3(10, -5, 5);
+        rFoot = rKnee + v.Vector3(12, -2, 2);
+    }
+
+    controller.skeleton.lKnee = lKnee;
+    controller.skeleton.rKnee = rKnee;
+    controller.skeleton.lFoot = lFoot;
+    controller.skeleton.rFoot = rFoot;
+
+    // Arms
     double lArmAngle = -armSwing;
     double rArmAngle = armSwing;
     double rElbowBend = 0.0;
     double lElbowBend = 0.0;
 
-    // Default "A-Pose" (Straight down diagonally)
-    if (_runWeight < 0.1 && !_wasDashing && !isAttacking) {
-       lArmAngle = 0.3;  // Angle out slightly
+    if (controller.runWeight < 0.1 && !_wasDashing && !controller.isAttacking) {
+       lArmAngle = 0.3;
        rArmAngle = 0.3;
-       lElbowBend = 0.0; // Straight
-       rElbowBend = 0.0;
     }
 
-    // Weapon/Attack Poses
-    if (isAttacking) {
-      if (attackType != AttackType.kick && weaponType != WeaponType.none) rArmAngle = -1.5;
+    if (controller.isAttacking) {
+      if (attackType != AttackType.kick && controller.weaponType != WeaponType.none) rArmAngle = -1.5;
     }
 
-    if (weaponType == WeaponType.bow) {
+    if (controller.weaponType == WeaponType.bow) {
        lArmAngle = -1.5;
        rArmAngle = -1.5;
-    } else if (weaponType != WeaponType.none && !isAttacking) {
+    } else if (controller.weaponType != WeaponType.none && !controller.isAttacking) {
        rArmAngle = -0.5;
     }
 
-    // --- DASH ANIMATION (Superman Pose) ---
+    // Dash (Superman)
     if (_wasDashing) {
-       lArmAngle = 0.8; // Left arm back
+       lArmAngle = 0.8;
        lElbowBend = -1.0;
-
-       // Right Arm: Straight out to direction of dash
-       // No pump/punch, just extends firmly
        double extension = (_dashTimer / 0.1).clamp(0.0, 1.0);
-
-       // Smoothly transition from current angle to forward (-1.6)
        rArmAngle = -1.6 * extension;
-       rElbowBend = 0.0;
     }
 
-    // Calculate Arm Joints (Offset X by -6/6 for triangular shoulders)
-    Vector3 lElbow = _rotateX(Vector3(-6, 10, 0), lArmAngle) + lShoulder;
-    Vector3 rElbow = _rotateX(Vector3(6, 10, 0), rArmAngle) + rShoulder;
+    // Joints
+    v.Vector3 lElbow = rotateX(v.Vector3(-6, 10, 0), lArmAngle) + neck; // Neck is effectively shoulder center
+    v.Vector3 rElbow = rotateX(v.Vector3(6, 10, 0), rArmAngle) + neck;
 
-    Vector3 lHand = _rotateX(Vector3(0, 10, 0), lArmAngle + lElbowBend) + lElbow;
-    Vector3 rHand = _rotateX(Vector3(0, 10, 0), rArmAngle + rElbowBend) + rElbow;
+    v.Vector3 lHand = rotateX(v.Vector3(0, 10, 0), lArmAngle + lElbowBend) + lElbow;
+    v.Vector3 rHand = rotateX(v.Vector3(0, 10, 0), rArmAngle + rElbowBend) + rElbow;
 
-    // Dash Extension (Reach forward)
     if (_wasDashing) {
        rHand.z += 25;
-       rHand.x = rShoulder.x; // Center align
+       rHand.x = neck.x + 6; // Align
     }
 
-    // Attack Extension (Standard Punch for non-kick attacks)
-    if (isAttacking && attackType != AttackType.kick && weaponType != WeaponType.none) {
-       double punchProgress = sin((_attackTimer / 0.3) * pi);
-       if (weaponType == WeaponType.none) {
+    if (controller.isAttacking && attackType != AttackType.kick && controller.weaponType != WeaponType.none) {
+       double punchProgress = sin((controller.attackTimer / 0.3) * pi);
+       if (controller.weaponType == WeaponType.none) {
           rHand.z += punchProgress * 15;
           rHand.y -= punchProgress * 5;
        } else {
@@ -211,92 +325,22 @@ class StickmanAnimator {
        }
     }
 
-    // --- 3. GLOBAL ROTATION ---
-    double renderAngle = _facingAngle;
-    if (isAttacking && (attackType == AttackType.kick || weaponType == WeaponType.none)) {
-      // Whirlwind Spin: Spin 360 degrees during attack
-      double kickProgress = (_attackTimer / 0.3);
+    controller.skeleton.lElbow = lElbow;
+    controller.skeleton.rElbow = rElbow;
+    controller.skeleton.lHand = lHand;
+    controller.skeleton.rHand = rHand;
+
+    // Global Rotation
+    // Use the synced facingAngle instead of controller.facingAngle which might be stale
+    double renderAngle = facingAngle + (pi / 2);
+    if (controller.isAttacking && (attackType == AttackType.kick || controller.weaponType == WeaponType.none)) {
+      double kickProgress = (controller.attackTimer / 0.3);
       renderAngle += kickProgress * pi * 2;
     }
 
-    List<Vector3> allPoints = [hip, neck, lShoulder, rShoulder, lHip, rHip, lKnee, rKnee, lFoot, rFoot, lElbow, rElbow, lHand, rHand];
-    for (var p in allPoints) {
-      _applyRotationY(p, renderAngle);
+    final rotY = v.Matrix3.rotationY(renderAngle);
+    for (var p in controller.skeleton.allPoints) {
+      p.setFrom(rotY.transform(p));
     }
-
-    // --- 4. RENDER TO 2D ---
-    Offset toScreen(Vector3 v) => Offset(v.x, v.y + (v.z * 0.3));
-
-    // Draw Spine
-    canvas.drawLine(toScreen(hip), toScreen(neck), paint);
-
-    // Draw Legs
-    canvas.drawLine(toScreen(lHip), toScreen(lKnee), paint);
-    canvas.drawLine(toScreen(lKnee), toScreen(lFoot), paint);
-    canvas.drawLine(toScreen(rHip), toScreen(rKnee), paint);
-    canvas.drawLine(toScreen(rKnee), toScreen(rFoot), paint);
-
-    // Draw Arms
-    canvas.drawLine(toScreen(lShoulder), toScreen(lElbow), paint);
-    canvas.drawLine(toScreen(lElbow), toScreen(lHand), paint);
-    canvas.drawLine(toScreen(rShoulder), toScreen(rElbow), paint);
-    canvas.drawLine(toScreen(rElbow), toScreen(rHand), paint);
-
-    // Draw Head
-    Offset headCenter = toScreen(neck + Vector3(0, -8, 0));
-    canvas.drawCircle(headCenter, 6, fillPaint);
-
-    // Draw Weapons
-    if (weaponType == WeaponType.sword) _drawSword(canvas, toScreen(rHand), renderAngle, isAttacking);
-    else if (weaponType == WeaponType.axe) _drawAxe(canvas, toScreen(rHand), renderAngle, isAttacking);
-    else if (weaponType == WeaponType.bow) _drawBow(canvas, toScreen(lHand), renderAngle);
-
-    canvas.restore();
   }
-
-  void _drawSword(Canvas canvas, Offset handPos, double facing, bool attacking) {
-      double angle = facing;
-      if (attacking) angle += pi / 2;
-      final Paint p = Paint()..color = Colors.white ..strokeWidth = 2;
-      Offset end = handPos + Offset(cos(angle) * 20, sin(angle) * 5 - 20);
-      canvas.drawLine(handPos, end, p);
-      Offset guardCenter = handPos + Offset(cos(angle) * 5, sin(angle) * 1 - 5);
-      canvas.drawLine(guardCenter - Offset(5,0), guardCenter + Offset(5,0), p);
-  }
-
-  void _drawAxe(Canvas canvas, Offset handPos, double facing, bool attacking) {
-      double angle = facing;
-      if (attacking) angle += pi / 2;
-      final Paint p = Paint()..color = Colors.grey ..strokeWidth = 3;
-      Offset end = handPos + Offset(cos(angle) * 10, -25);
-      canvas.drawLine(handPos, end, p);
-      canvas.drawCircle(end, 8, Paint()..color = Colors.grey ..style = PaintingStyle.fill);
-  }
-
-  void _drawBow(Canvas canvas, Offset handPos, double facing) {
-      final Paint p = Paint()..color = Colors.brown ..style = PaintingStyle.stroke ..strokeWidth=2;
-      canvas.drawArc(Rect.fromCenter(center: handPos, width: 10, height: 30), facing - pi/2, pi, false, p);
-      canvas.drawLine(handPos + Offset(0, -15), handPos + Offset(0, 15), Paint()..color=Colors.white..strokeWidth=1);
-  }
-
-  Vector3 _rotateX(Vector3 v, double angle) {
-    double c = cos(angle);
-    double s = sin(angle);
-    return Vector3(v.x, v.y * c - v.z * s, v.y * s + v.z * c);
-  }
-
-  void _applyRotationY(Vector3 v, double angle) {
-    double c = cos(angle);
-    double s = sin(angle);
-    double newX = v.x * c + v.z * s;
-    double newZ = -v.x * s + v.z * c;
-    v.x = newX;
-    v.z = newZ;
-  }
-}
-
-class Vector3 {
-  double x, y, z;
-  Vector3(this.x, this.y, this.z);
-  Vector3 operator +(Vector3 other) => Vector3(x + other.x, y + other.y, z + other.z);
 }

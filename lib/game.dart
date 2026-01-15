@@ -102,10 +102,34 @@ class ActionButton extends PositionComponent {
   void render(Canvas canvas) {
     canvas.drawCircle(Offset(size.x / 2, size.y / 2), size.x / 2, _bgPaint);
     canvas.drawCircle(Offset(size.x / 2, size.y / 2), size.x / 2, _strokePaint);
-    _textPainter.paint(
-      canvas,
-      Offset((size.x - _textPainter.width) / 2, (size.y - _textPainter.height) / 2),
-    );
+
+    // Draw Whirlwind Icon instead of Text
+    if (label == "SLASH") {
+       final Paint iconPaint = Paint()
+         ..color = Colors.white.withOpacity(0.9)
+         ..style = PaintingStyle.stroke
+         ..strokeWidth = 3.0
+         ..strokeCap = StrokeCap.round;
+
+       canvas.save();
+       canvas.translate(size.x / 2, size.y / 2);
+       // Simple spiral
+       for(int i=0; i<2; i++) {
+          canvas.drawArc(
+            Rect.fromCircle(center: Offset.zero, radius: 10 + (i * 8.0)),
+            0.5 + (i * 1.0),
+            4.0,
+            false,
+            iconPaint
+          );
+       }
+       canvas.restore();
+    } else {
+      _textPainter.paint(
+        canvas,
+        Offset((size.x - _textPainter.width) / 2, (size.y - _textPainter.height) / 2),
+      );
+    }
   }
 }
 
@@ -156,11 +180,15 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
 
   late World world;
   late CameraComponent cameraComponent;
+  String? animationData;
 
   @override
   Future<void> onLoad() async {
     // Ensure music is playing (but don't restart if it is)
     SoundService.instance.playBackgroundMusic('audio/main2.mp3');
+
+    // Load Animation Data Once
+    animationData = await assets.readFile('data/fighter_animations.sap');
 
     // Create World
     world = World();
@@ -189,16 +217,13 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
       world.add(OrbitalShield(player));
     }
 
-    // Add Infinite Background (Grid)
-    world.add(GridBackground());
-
     // Spawn Obstacles (Rough background elements)
     _spawnObstacles();
 
     // Setup Camera
     cameraComponent = CameraComponent(world: world);
     cameraComponent.viewfinder.anchor = Anchor.center;
-    cameraComponent.follow(player);
+    cameraComponent.follow(player); // Locked follow (Bird's Eye is handled by StickmanPainter rotation)
     add(cameraComponent);
     add(world);
 
@@ -699,9 +724,17 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     health = maxHealth;
     dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
 
-    // Initialize Animator instead of SVGs
-    // Set Animator to use Kick by default for attacks and remove stick weapon
-    _animator = StickmanAnimator(color: Colors.cyanAccent, scale: 1.2, attackType: AttackType.kick, weaponType: WeaponType.none);
+    // Initialize the animator with the loaded data from GameRef
+    _animator = StickmanAnimator(
+      color: Colors.cyanAccent,
+      scale: 1.2,
+      attackType: AttackType.kick,
+      weaponType: WeaponType.none,
+      data: gameRef.animationData // Pass the loaded data here
+    );
+
+    // Set default animation
+    _animator.play("Standard Idle");
   }
 
   @override
@@ -723,7 +756,11 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
       position.add(velocity * dt);
 
       if (_dashTimer % 0.05 < dt) {
-         gameRef.world.add(VisualEffects.createDashTrail(position, angle));
+         double dashAngle = 0;
+         if (_dashDirection != Vector2.zero()) {
+             dashAngle = atan2(_dashDirection.y, _dashDirection.x);
+         }
+         gameRef.world.add(VisualEffects.createDashTrail(position, dashAngle));
       }
       if (_dashTimer <= 0) {
         isDashing = false;
@@ -736,6 +773,21 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     // Update Animator
     _animator.isAttacking = isSlashing;
+
+    // Animation Logic
+    // Animation Logic
+    if (isDashing) {
+      _animator.play("Hook Punch");
+    } else if (isSlashing) {
+      _animator.play("Hurricane Kick");
+    } else if (velocity.length > 10) {
+      // Play "Running" (File name matches asset)
+      _animator.play("Running");
+    } else {
+      _animator.play("Standard Idle");
+    }
+
+    // Pass velocity to animator for direction calculation (3D facing)
     _animator.update(dt, velocity, isDashing);
   }
 
@@ -928,7 +980,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     // Choose color/scale based on type
     Color c = Colors.redAccent;
     double s = 1.0;
-    WeaponType w = WeaponType.sword; // Default enemy has sword
+    WeaponType w = WeaponType.none; // Default Red Enemy uses Fist
 
     if (isElite) {
       c = Colors.deepPurpleAccent;
@@ -940,7 +992,16 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       c = Colors.white.withOpacity(0.5);
     }
 
-    _animator = StickmanAnimator(color: c, scale: s, weaponType: w);
+    // Initialize Animator with shared data
+    _animator = StickmanAnimator(
+      color: c,
+      scale: s,
+      weaponType: WeaponType.none, // Remove weapon (sword) image for everyone per request
+      data: gameRef.animationData
+    );
+
+    // Set default animation
+    _animator.play("Standard Idle");
   }
 
   @override
@@ -979,6 +1040,21 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
           position.add(velocity * dt);
         }
       }
+    }
+
+    // Attack Logic (Melee)
+    double distToPlayer = position.distanceTo(gameRef.player.position);
+    if (distToPlayer < size.x + 10) {
+       _animator.isAttacking = true;
+       _animator.play("Kicking"); // Use kicking animation
+    } else {
+       _animator.isAttacking = false;
+       // Play animations based on movement
+       if (velocity.length > 10) {
+       _animator.play("Running"); // Mapped to "Standard Run" intent but file uses "Running"
+       } else {
+          _animator.play("Standard Idle");
+       }
     }
 
     // Update Animator with velocity
@@ -1147,6 +1223,9 @@ class ArrowProjectile extends EnemyProjectile {
 
 class ShooterEnemy extends Enemy {
   double _shootTimer = 0.0;
+  bool _isShooting = false;
+  double _shootingAnimationTimer = 0.0;
+  bool _hasFired = false;
 
   ShooterEnemy() : super();
 
@@ -1154,7 +1233,15 @@ class ShooterEnemy extends Enemy {
   Future<void> onLoad() async {
     await super.onLoad();
     // Override color/scale for Shooter and set weapon to Bow
-    _animator = StickmanAnimator(color: Colors.purpleAccent, scale: 1.0, weaponType: WeaponType.bow);
+    // We need to re-initialize or modify properties. Since _animator is late, super.onLoad initialized it.
+    // We can just create a new one with correct color/weapon and DATA.
+    _animator = StickmanAnimator(
+      color: Colors.purpleAccent,
+      scale: 1.0,
+      weaponType: WeaponType.none, // Remove bow image for Shooter per request (animation handles visual)
+      data: gameRef.animationData
+    );
+    _animator.play("Standard Idle");
   }
 
   @override
@@ -1166,37 +1253,69 @@ class ShooterEnemy extends Enemy {
 
     Vector2 velocity = Vector2.zero();
 
-    if (_knockbackVelocity.length > 5) {
-      velocity = _knockbackVelocity;
-      position.add(velocity * dt);
-      _knockbackVelocity.scale(0.9);
+    if (_isShooting) {
+       _shootingAnimationTimer += dt;
+       // Wait for animation to finish or timeout
+       if (!_animator.isPlaying || _shootingAnimationTimer > 0.8) {
+          if (!_hasFired) {
+             gameRef.world.add(ArrowProjectile(position, gameRef.player.position));
+             _hasFired = true;
+          }
+          _isShooting = false;
+       }
     } else {
-      _knockbackVelocity.setZero();
+      if (_knockbackVelocity.length > 5) {
+        velocity = _knockbackVelocity;
+        position.add(velocity * dt);
+        _knockbackVelocity.scale(0.9);
+      } else {
+        _knockbackVelocity.setZero();
 
-      // Custom movement: maintain distance
-      double dist = position.distanceTo(gameRef.player.position);
-      Vector2 dir = (gameRef.player.position - position).safeNormalized();
+        // Custom movement: maintain distance
+        double dist = position.distanceTo(gameRef.player.position);
+        Vector2 dir = (gameRef.player.position - position).safeNormalized();
 
-      if (dist < 300) {
-         velocity = -dir * 80; // Retreat
-      } else if (dist > 500) {
-         velocity = dir * 100; // Chase
+        if (dist < 300) {
+           velocity = -dir * 80; // Retreat
+        } else if (dist > 500) {
+           velocity = dir * 100; // Chase
+        }
+
+        position.add(velocity * dt);
       }
 
-      position.add(velocity * dt);
+      // Shoot Logic
+      _shootTimer += dt;
+      if (_shootTimer > 2.0) {
+         _shootTimer = 0.0;
+         _isShooting = true;
+         _shootingAnimationTimer = 0.0;
+         _hasFired = false;
+
+         // Trigger attack anim
+         // Correct name from file is "Shooting Arrow"
+         _animator.play("Shooting Arrow");
+      }
     }
 
-    // Shoot Logic
-    _shootTimer += dt;
-    if (_shootTimer > 2.0) {
-       _shootTimer = 0.0;
-       // Trigger attack anim
-       _animator.isAttacking = true;
-       gameRef.world.add(ArrowProjectile(position, gameRef.player.position));
+    if (!_isShooting) {
+        if (velocity.length > 10) {
+           // Use Running for movement if Walk is missing or for consistency
+           _animator.play("Running");
+        } else {
+           _animator.play("Standard Idle");
+        }
     }
 
     // Update Animator
-    _animator.update(dt, velocity, false);
+    // If shooting, force facing towards player
+    if (_isShooting) {
+       Vector2 faceDir = (gameRef.player.position - position).safeNormalized();
+       // Pass a fake velocity so animator rotates to face player
+       _animator.update(dt, faceDir * 100, false);
+    } else {
+       _animator.update(dt, velocity, false);
+    }
   }
 }
 
@@ -1331,7 +1450,7 @@ class MagnetItem extends PositionComponent {
 
 class HurricaneKickEffect extends PositionComponent {
   double _lifeTime = 0.0;
-  static const double _duration = 0.3;
+  static const double _duration = 0.5; // Increased duration
   final Paint _paint = Paint()
     ..style = PaintingStyle.stroke
     ..strokeWidth = 3.0
