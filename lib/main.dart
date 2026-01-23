@@ -9,10 +9,11 @@ import 'sound_service.dart';
 class AdManager {
   // Production banner ad unit (App Bundle builds should use this by setting
   // the dart-define BUNDLE_BUILT=true when building an AAB)
-  static const String bannerAdUnitId = 'bannerca-app-pub-4400173019354346/8395964292';
+  static const String bannerAdUnitId = 'ca-app-pub-4400173019354346/8395964292';
+  
 
   // Google-provided test banner (safe to use during development and for APK/non-bundle builds)
-  static const String admobBannerTestId = 'ca-app-pub-3940256099942544/6300978111';
+  static const String admobBannerTestId = 'ca-app-pub-4400173019354346/8395964292';
 
   // Set at build time via --dart-define=BUNDLE_BUILT=true for App Bundle releases.
   static const bool isBundleBuild = bool.fromEnvironment('BUNDLE_BUILT', defaultValue: false);
