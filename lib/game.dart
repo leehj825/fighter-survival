@@ -707,6 +707,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   double _dashTimer = 0.0;
   static const double _dashDuration = 0.32;
   double _currentDashCooldown = 0.0;
+  double get currentDashCooldown => _currentDashCooldown;
+
   Vector2 _dashDirection = Vector2.zero();
   bool isSlashing = false;
 
@@ -735,6 +737,9 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     // Set default animation
     _animator.play("Standard Idle");
+
+    // Add Dash Cooldown Bar
+    add(DashCooldownBar(this)..position = Vector2(size.x / 2, -10));
   }
 
   @override
@@ -1494,5 +1499,36 @@ class HurricaneKickEffect extends PositionComponent {
     }
 
     canvas.restore();
+  }
+}
+
+class DashCooldownBar extends PositionComponent {
+  final Player player;
+  final Paint _barPaint = Paint()..style = PaintingStyle.fill;
+  final Paint _bgPaint = Paint()..color = Colors.black.withOpacity(0.5)..style = PaintingStyle.fill;
+  final Paint _borderPaint = Paint()..color = Colors.white.withOpacity(0.5)..style = PaintingStyle.stroke..strokeWidth = 1;
+
+  DashCooldownBar(this.player) : super(size: Vector2(40, 6), anchor: Anchor.center);
+
+  @override
+  void render(Canvas canvas) {
+     // Background
+     canvas.drawRect(size.toRect(), _bgPaint);
+     canvas.drawRect(size.toRect(), _borderPaint);
+
+     double progress = 0.0;
+     if (player.dashCooldownMax > 0) {
+        progress = (1.0 - (player.currentDashCooldown / player.dashCooldownMax)).clamp(0.0, 1.0);
+     }
+
+     if (progress < 1.0) {
+        _barPaint.color = Colors.yellow; // Charging
+     } else {
+        _barPaint.color = Colors.cyanAccent; // Ready
+     }
+
+     if (progress > 0) {
+        canvas.drawRect(Rect.fromLTWH(0, 0, size.x * progress, size.y), _barPaint);
+     }
   }
 }
