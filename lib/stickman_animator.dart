@@ -72,11 +72,12 @@ class StickmanAnimator {
                 fps: clip.fps * multiplier,
                 isLooping: clip.isLooping
              );
-          } else if (clip.name == "Hook Punch") {
+          } else if (clip.name == "Hook Punch" || clip.name == "Hook") {
+             // Make Hook and Hook Punch animations faster for tap attacks
              clip = StickmanClip(
                 name: clip.name,
                 keyframes: clip.keyframes,
-                fps: 120.0, // Increased from 90 to 120 for faster punch/dash
+                fps: clip.fps * 2.5, // 2.5x faster for quick tap attacks
                 isLooping: clip.isLooping
              );
           }
@@ -98,7 +99,8 @@ class StickmanAnimator {
       if (controller.activeClip?.name == animationName && controller.isPlaying) return;
 
       controller.activeClip = _clips[animationName];
-      controller.currentFrameIndex = 0;
+      // Start magic animation from frame 50
+      controller.currentFrameIndex = (animationName == "magic") ? 50 : 0;
       controller.setMode(EditorMode.animate);
       controller.isPlaying = true;
     }

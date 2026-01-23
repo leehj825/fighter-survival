@@ -139,6 +139,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
   late Player player;
   late Hud hud;
   late VirtualJoystick joystick;
+  late VirtualJoystick rightJoystick; // Right-side joystick for blaster control
   late ActionButton slashButton;
 
   RpgGame({this.resumeGame = false});
@@ -163,13 +164,20 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
   // --- Input State ---
   int? _movePointerId;
   int? _actionPointerId;
+  int? _rightJoystickPointerId; // For blaster control joystick
 
   // Movement State
   Vector2? _moveStartPos;
+  Vector2? _rightJoystickStartPos;
 
   // Action Gesture State
   Vector2? _lastActionPos;
   DateTime? _lastActionTime;
+  
+  // Shoot direction from right joystick
+  Vector2? _shootDirection;
+  double _lastShootTime = 0.0;
+  static const double _autoShootInterval = 0.2; // Auto-shoot interval when joystick is held
 
   // Tweakable Variable for Dash Sensitivity
   static const double dashVelocityThreshold = 1000.0; // Lowered from 2500.0
@@ -235,6 +243,13 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     joystick = VirtualJoystick()..priority = 200;
     hud.add(joystick); // Add to HUD (Root Component) to ensure screen-space alignment
 
+    // Add Right Joystick for Blaster (if unlocked)
+    // Initialize it but keep it hidden until blaster is unlocked
+    rightJoystick = VirtualJoystick()..priority = 200;
+    rightJoystick.position = Vector2(size.x - 150, size.y - 150); // Right side, fixed position
+    rightJoystick.isVisible = GameData().unlockBlaster; // Only visible when blaster is unlocked
+    hud.add(rightJoystick);
+
     // Add Action Buttons
     slashButton = ActionButton(label: "SLASH", color: Colors.redAccent)
       ..priority = 200
@@ -256,6 +271,10 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     super.onGameResize(size);
     if (isLoaded) {
       slashButton.position = Vector2(size.x - 100, size.y - 80);
+      if (rightJoystick.isLoaded) {
+        rightJoystick.position = Vector2(size.x - 150, size.y - 150);
+        rightJoystick.isVisible = GameData().unlockBlaster;
+      }
     }
   }
 
@@ -519,17 +538,33 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
       joystick.isVisible = true;
       joystick.reset();
     }
-    // 3. Assign Action Pointer (Right side, Swipe for Dash)
-    else if (_actionPointerId == null) {
+    // 2b. Assign Right Joystick Pointer (Right side, for blaster control)
+    // Only if touch is specifically near the joystick position
+    bool assignedToRightJoystick = false;
+    if (GameData().unlockBlaster && _rightJoystickPointerId == null && 
+        startPos.x > size.x / 2 && !slashButton.containsPoint(startPos - hud.position)) {
+      final Vector2 joystickPos = rightJoystick.position;
+      if (startPos.distanceTo(joystickPos) < 100) { // Within joystick activation radius
+        _rightJoystickPointerId = pointerId;
+        _rightJoystickStartPos = joystickPos; // Fixed position
+        rightJoystick.reset();
+        assignedToRightJoystick = true;
+      }
+    }
+    
+    // 3. Assign Action Pointer (Right side, Swipe for Dash or Tap to Attack)
+    // This should work even when blaster is unlocked (for dash swipes)
+    // Only assign if not already assigned to right joystick
+    if (!assignedToRightJoystick && _actionPointerId == null && 
+        startPos.x > size.x / 2 && !slashButton.containsPoint(startPos - hud.position)) {
       _actionPointerId = pointerId;
       _lastActionPos = startPos;
       _lastActionTime = DateTime.now();
 
-      // Optional: Tap to shoot logic
-      if (GameData().unlockBlaster) {
-         Vector2 screenCenter = size / 2;
-         Vector2 dir = (startPos - screenCenter).safeNormalized();
-         player.shoot(dir);
+      // Tap to attack (damage enemies with alternating Hook/Hook Punch)
+      // Only if blaster is NOT unlocked (when unlocked, use joystick for shooting)
+      if (!GameData().unlockBlaster) {
+        player.tapAttack();
       }
     }
   }
@@ -549,6 +584,24 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
         player.moveDirection = offset.safeNormalized();
       } else {
         player.moveDirection = Vector2.zero();
+      }
+    }
+
+    // Handle Right Joystick (Blaster Control)
+    if (pointerId == _rightJoystickPointerId && _rightJoystickStartPos != null) {
+      final Vector2 offset = currentPos - _rightJoystickStartPos!;
+      rightJoystick.updateKnob(offset);
+
+      if (offset.length > 5) {
+        _shootDirection = offset.safeNormalized();
+        // Shoot when joystick is first moved, then auto-shoot at intervals
+        final double currentTime = DateTime.now().millisecondsSinceEpoch / 1000.0;
+        if (currentTime - _lastShootTime >= _autoShootInterval) {
+          player.shoot(_shootDirection!);
+          _lastShootTime = currentTime;
+        }
+      } else {
+        _shootDirection = null;
       }
     }
 
@@ -590,6 +643,14 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
       _moveStartPos = null;
       player.moveDirection = null;
       joystick.isVisible = false;
+    }
+
+    if (pointerId == _rightJoystickPointerId) {
+      _rightJoystickPointerId = null;
+      _rightJoystickStartPos = null;
+      _shootDirection = null;
+      _lastShootTime = 0.0;
+      rightJoystick.reset();
     }
 
     if (pointerId == _actionPointerId) {
@@ -711,6 +772,20 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
   Vector2 _dashDirection = Vector2.zero();
   bool isSlashing = false;
+  double _shootCooldown = 0.0;
+  static const double _shootCooldownTime = 0.15; // Time between shots
+  
+  // Frenzy power-up state
+  double _frenzyTimer = 0.0;
+  bool get isFrenzyActive => _frenzyTimer > 0.0;
+  double get frenzySpeedMult => isFrenzyActive ? 2.0 : 1.0; // Double animation speed
+
+  // Animation alternation state
+  bool _useRoundKick = true; // Alternate between Round Kick and Roundhouse Kick
+  bool _useHook = true; // Alternate between Hook and Hook Punch
+  
+  // Attack state to prevent stacking
+  bool _isTapAttacking = false;
 
   // NEW: Animator
   late StickmanAnimator _animator;
@@ -749,6 +824,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     // ... Keep existing cooldown logic ...
     if (_damageCooldown > 0) _damageCooldown -= dt;
     if (_currentDashCooldown > 0) _currentDashCooldown -= dt;
+    if (_shootCooldown > 0) _shootCooldown -= dt;
+    if (_frenzyTimer > 0) _frenzyTimer -= dt;
 
     Vector2 velocity = Vector2.zero();
 
@@ -782,12 +859,14 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     // Animation Logic
     // Animation Logic
     if (isDashing) {
-      _animator.play("Hook Punch");
+      // Alternate between Round Kick and Roundhouse Kick
+      _animator.play(_useRoundKick ? "Round Kick" : "Roundhouse Kick");
+      _useRoundKick = !_useRoundKick;
     } else if (isSlashing) {
-      _animator.play("Hurricane Kick");
+      _animator.play("magic");
     } else if (velocity.length > 10) {
-      // Play "Running" (File name matches asset)
-      _animator.play("Running");
+      // Play "running" (File name matches asset)
+      _animator.play("running");
     } else {
       _animator.play("Standard Idle");
     }
@@ -816,7 +895,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     isDashing = true;
     isSlashing = false; // Reset slash if dashing
     _dashTimer = _dashDuration;
-    _currentDashCooldown = dashCooldownMax;
+    // Frenzy halves cooldown
+    _currentDashCooldown = dashCooldownMax / (isFrenzyActive ? 2.0 : 1.0);
 
     if (direction.length > 0) {
       _dashDirection = direction.safeNormalized();
@@ -844,9 +924,46 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   // ... shoot, gainXp, _levelUp, takeDamage same as before ...
   // Be sure to verify takeDamage logic is preserved
   void shoot(Vector2 dir) {
+    if (_shootCooldown > 0) return; // Prevent spam
+    // Frenzy halves cooldown
+    _shootCooldown = _shootCooldownTime / (isFrenzyActive ? 2.0 : 1.0);
     int sfxType = damageMult > 1.5 ? 1 : 0;
     SoundService.instance.playShoot(variant: sfxType);
     gameRef.world.add(PlayerProjectile(position, dir, damageMult));
+  }
+
+  void tapAttack() {
+    // Prevent stacking attacks
+    if (_isTapAttacking) return;
+    _isTapAttacking = true;
+    
+    // Play alternating Hook/Hook Punch animation with faster speed
+    final String animName = _useHook ? "Hook" : "Hook Punch";
+    _animator.play(animName);
+    _useHook = !_useHook;
+    _animator.isAttacking = true;
+    
+    // Speed up the animation by modifying the animator's clip speed
+    // This will be handled in stickman_animator.dart
+    
+    // Damage nearby enemies
+    for (final child in gameRef.world.children) {
+      if (child is Enemy) {
+        final double dist = position.distanceTo(child.position);
+        final double combinedRadius = (size.x / 2) + (child.size.x / 2);
+        if (dist < (combinedRadius + 40)) {
+          child.takeDamage((15 * damageMult).toInt(), knockbackDir: child.position - position);
+        }
+      }
+    }
+    
+    // Reset attacking state after a short delay (faster completion)
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (!isRemoved) {
+        _animator.isAttacking = false;
+        _isTapAttacking = false;
+      }
+    });
   }
 
   void gainXp(int amount) {
@@ -969,6 +1086,13 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   final EnemyModifier modifier;
   double _regenTimer = 0.0;
   int _maxHealth = 2;
+  
+  // Summoner state
+  double _summonTimer = 0.0;
+  static const double _summonInterval = 4.0; // Spawn every 4 seconds
+  
+  // Kamikaze pulse timer
+  double _pulseTimer = 0.0;
 
   // NEW: Animator
   late StickmanAnimator _animator;
@@ -995,6 +1119,13 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       c = Colors.yellowAccent;
     } else if (modifier == EnemyModifier.ghostly) {
       c = Colors.white.withOpacity(0.5);
+    } else if (modifier == EnemyModifier.kamikaze) {
+      c = Colors.red;
+    } else if (modifier == EnemyModifier.shieldBearer) {
+      c = Colors.blue;
+    } else if (modifier == EnemyModifier.summoner) {
+      c = Colors.green;
+      w = WeaponType.axe; // Staff-like weapon
     }
 
     // Initialize Animator with shared data
@@ -1013,6 +1144,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
   void update(double dt) {
     super.update(dt);
     if (_invulnerableTimer > 0) _invulnerableTimer -= dt;
+    if (modifier == EnemyModifier.kamikaze) _pulseTimer += dt;
 
     // ... Regen logic ...
     if (modifier == EnemyModifier.regen && health < _maxHealth && health > 0) {
@@ -1024,39 +1156,92 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     }
 
     Vector2 velocity = Vector2.zero();
+    double distToPlayer = position.distanceTo(gameRef.player.position);
 
-    if (_knockbackVelocity.length > 5) {
-      velocity = _knockbackVelocity;
-      position.add(velocity * dt);
-      _knockbackVelocity.scale(0.9);
+    // Special behaviors for new enemy types
+    if (modifier == EnemyModifier.kamikaze) {
+      // Kamikaze: Move very fast directly at player
+      if (distToPlayer > 5) {
+        Vector2 dir = (gameRef.player.position - position).safeNormalized();
+        velocity = dir * (_speed * 2.0); // Double speed
+        position.add(velocity * dt);
+        
+        // Explode on contact
+        if (distToPlayer < (size.x / 2 + gameRef.player.size.x / 2)) {
+          gameRef.player.takeDamage(30);
+          takeDamage(9999); // Kill self
+          gameRef.world.add(VisualEffects.createExplosion(position, scale: 2.0));
+          return; // Exit early since we're dead
+        }
+      }
+    } else if (modifier == EnemyModifier.summoner) {
+      // Summoner: Maintain distance, spawn enemies
+      _summonTimer += dt;
+      if (_summonTimer >= _summonInterval) {
+        _summonTimer = 0.0;
+        // Spawn a basic enemy nearby
+        final Random rng = Random();
+        Vector2 spawnPos = position + Vector2(
+          (rng.nextDouble() - 0.5) * 100,
+          (rng.nextDouble() - 0.5) * 100,
+        );
+        gameRef.world.add(Enemy()..position = spawnPos);
+      }
+      
+      // Flee if too close
+      if (distToPlayer < 200) {
+        Vector2 fleeDir = (position - gameRef.player.position).safeNormalized();
+        velocity = fleeDir * (_speed * 0.7); // Slower movement
+        position.add(velocity * dt);
+      } else {
+        // Normal roaming
+        _roamTimer -= dt;
+        if (_roamTimer <= 0 || _roamTarget == null) _pickNewTarget();
+        if (_roamTarget != null) {
+          final Vector2 dir = _roamTarget! - position;
+          if (dir.length < 5) {
+            _pickNewTarget();
+          } else {
+            velocity = dir.safeNormalized() * (_speed * 0.7);
+            position.add(velocity * dt);
+          }
+        }
+      }
     } else {
-      _knockbackVelocity.setZero();
-      _roamTimer -= dt;
-      if (_roamTimer <= 0 || _roamTarget == null) _pickNewTarget();
+      // Normal movement logic
+      if (_knockbackVelocity.length > 5) {
+        velocity = _knockbackVelocity;
+        position.add(velocity * dt);
+        _knockbackVelocity.scale(0.9);
+      } else {
+        _knockbackVelocity.setZero();
+        _roamTimer -= dt;
+        if (_roamTimer <= 0 || _roamTarget == null) _pickNewTarget();
 
-      if (_roamTarget != null) {
-        final Vector2 dir = _roamTarget! - position;
-        if (dir.length < 5) {
-          _pickNewTarget();
-        } else {
-          double currentSpeed = _speed;
-          if (modifier == EnemyModifier.swift) currentSpeed *= 1.5;
-          velocity = dir.safeNormalized() * currentSpeed;
-          position.add(velocity * dt);
+        if (_roamTarget != null) {
+          final Vector2 dir = _roamTarget! - position;
+          if (dir.length < 5) {
+            _pickNewTarget();
+          } else {
+            double currentSpeed = _speed;
+            if (modifier == EnemyModifier.swift) currentSpeed *= 1.5;
+            if (modifier == EnemyModifier.shieldBearer) currentSpeed *= 0.7; // Slower
+            velocity = dir.safeNormalized() * currentSpeed;
+            position.add(velocity * dt);
+          }
         }
       }
     }
 
-    // Attack Logic (Melee)
-    double distToPlayer = position.distanceTo(gameRef.player.position);
-    if (distToPlayer < size.x + 10) {
+    // Attack Logic (Melee) - Skip for Kamikaze (they explode instead)
+    if (modifier != EnemyModifier.kamikaze && distToPlayer < size.x + 10) {
        _animator.isAttacking = true;
        _animator.play("Kicking"); // Use kicking animation
     } else {
        _animator.isAttacking = false;
        // Play animations based on movement
        if (velocity.length > 10) {
-       _animator.play("Running"); // Mapped to "Standard Run" intent but file uses "Running"
+       _animator.play("running"); // Mapped to "Standard Run" intent but file uses "running"
        } else {
           _animator.play("Standard Idle");
        }
@@ -1078,6 +1263,31 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
   void takeDamage(int amount, {Vector2? knockbackDir}) {
     if (health <= 0 || _invulnerableTimer > 0) return;
+    
+    // Shield Bearer: Block damage from front
+    if (modifier == EnemyModifier.shieldBearer && knockbackDir != null) {
+      // Calculate if damage is from front (within 90 degrees of facing direction)
+      Vector2 facingDir = Vector2.zero();
+      if (_animator.controller.skeleton.allPoints.isNotEmpty) {
+        // Estimate facing direction from velocity or position relative to player
+        Vector2 toPlayer = gameRef.player.position - position;
+        if (toPlayer.length > 1) {
+          facingDir = toPlayer.safeNormalized();
+        }
+      }
+      
+      Vector2 damageDir = knockbackDir.safeNormalized();
+      double dot = facingDir.dot(damageDir);
+      
+      // If damage comes from front (dot > 0 means same direction), block it
+      if (dot > 0) {
+        // Blocked! Play block effect
+        gameRef.world.add(DamageText(0, position.clone() + Vector2(0, -30)));
+        SoundService.instance.playDamage(); // Reuse sound for block
+        return; // No damage taken
+      }
+    }
+    
     gameRef.world.add(DamageText(amount, position.clone() + Vector2(0, -30)));
     health -= amount;
     if (knockbackDir != null) _knockbackVelocity = knockbackDir.safeNormalized() * 400.0;
@@ -1088,6 +1298,14 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       gameRef.killCount++;
       // ... drops ...
       gameRef.world.add(XpGem(isElite ? 50 : 10)..position = position);
+      
+      // Spawn power-up with 3% chance
+      final Random rng = Random();
+      if (rng.nextDouble() < 0.03) {
+        final powerUpType = PowerUpType.values[rng.nextInt(PowerUpType.values.length)];
+        gameRef.world.add(PowerUp(powerUpType)..position = position + Vector2((rng.nextDouble() - 0.5) * 20, (rng.nextDouble() - 0.5) * 20));
+      }
+      
       SoundService.instance.playExplosion(isLarge: isElite);
       gameRef.world.add(VisualEffects.createExplosion(position));
     }
@@ -1101,8 +1319,66 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       Paint()..color = Colors.black.withOpacity(0.3)
     );
 
+    // Kamikaze: Pulsing red glow
+    if (modifier == EnemyModifier.kamikaze) {
+      final double pulse = (sin(_pulseTimer * 10) + 1) / 2; // Pulse based on time
+      final double scale = 1.0 + (pulse * 0.2); // Scale up slightly
+      final double opacity = 0.3 + (pulse * 0.4);
+      
+      canvas.save();
+      canvas.translate(size.x / 2, size.y / 2);
+      canvas.scale(scale);
+      canvas.drawCircle(
+        Offset.zero,
+        size.x / 2,
+        Paint()..color = Colors.red.withOpacity(opacity)
+      );
+      canvas.restore();
+    }
+
     // Render Procedural Enemy
     _animator.render(canvas, Vector2(size.x / 2, size.y / 2 + 5), size.y);
+
+    // Shield Bearer: Draw shield in front
+    if (modifier == EnemyModifier.shieldBearer) {
+      // Calculate facing direction
+      Vector2 toPlayer = gameRef.player.position - position;
+      if (toPlayer.length > 1) {
+        Vector2 facingDir = toPlayer.safeNormalized();
+        double angle = atan2(facingDir.y, facingDir.x);
+        
+        canvas.save();
+        canvas.translate(size.x / 2, size.y / 2);
+        canvas.rotate(angle);
+        
+        // Draw shield arc
+        final shieldPaint = Paint()
+          ..color = Colors.blue.withOpacity(0.6)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4;
+        canvas.drawArc(
+          Rect.fromLTWH(-15, -20, 30, 40),
+          -pi / 3,
+          2 * pi / 3,
+          false,
+          shieldPaint
+        );
+        
+        // Shield fill
+        final shieldFill = Paint()
+          ..color = Colors.blue.withOpacity(0.2)
+          ..style = PaintingStyle.fill;
+        canvas.drawArc(
+          Rect.fromLTWH(-15, -20, 30, 40),
+          -pi / 3,
+          2 * pi / 3,
+          false,
+          shieldFill
+        );
+        
+        canvas.restore();
+      }
+    }
 
     // Flash
     if (_invulnerableTimer > 0) {
@@ -1165,6 +1441,135 @@ class XpGem extends PositionComponent {
     super.update(dt);
     _lifeTime += dt;
     position.y += sin(_lifeTime * 5) * 0.5;
+  }
+}
+
+class PowerUp extends PositionComponent with HasGameRef<RpgGame> {
+  final PowerUpType type;
+  double _lifeTime = 0.0;
+  double _hoverTime = 0.0;
+
+  PowerUp(this.type) : super(size: Vector2.all(30), anchor: Anchor.center);
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _lifeTime += dt;
+    _hoverTime += dt;
+    
+    // Hover effect
+    position.y += sin(_hoverTime * 3) * 0.5;
+    
+    // Collection check
+    if (gameRef.player.position.distanceTo(position) < 30) {
+      _applyEffect();
+      removeFromParent();
+    }
+    
+    // Despawn after 10 seconds
+    if (_lifeTime > 10.0) {
+      removeFromParent();
+    }
+  }
+
+  void _applyEffect() {
+    switch (type) {
+      case PowerUpType.health:
+        // Heal 20% of max HP
+        final healAmount = (gameRef.player.maxHealth * 0.2).toInt();
+        gameRef.player.health = (gameRef.player.health + healAmount).clamp(0, gameRef.player.maxHealth);
+        gameRef.world.add(DamageText(healAmount, position, isCrit: true));
+        break;
+        
+      case PowerUpType.frenzy:
+        // Activate frenzy for 5 seconds
+        gameRef.player._frenzyTimer = 5.0;
+        gameRef.hud.showStory("FRENZY MODE!");
+        break;
+        
+      case PowerUpType.magnet:
+        // Magnetize all XpGems
+        for (final gem in gameRef.world.children.whereType<XpGem>()) {
+          gem.isMagnetized = true;
+        }
+        break;
+        
+      case PowerUpType.nuke:
+        // Damage all non-elite enemies
+        int killed = 0;
+        for (final child in gameRef.world.children) {
+          if (child is Enemy && !child.isElite) {
+            child.takeDamage(9999);
+            killed++;
+          }
+        }
+        gameRef.cameraShake(5.0);
+        // Flash effect
+        gameRef.world.add(VisualEffects.createExplosion(gameRef.player.position, scale: 5.0));
+        if (killed > 0) {
+          gameRef.hud.showStory("NUKE! $killed KILLED");
+        }
+        break;
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    final Paint paint = Paint();
+    final Offset center = (size / 2).toOffset();
+    
+    switch (type) {
+      case PowerUpType.health:
+        paint.color = Colors.red;
+        canvas.drawCircle(center, 12, paint);
+        canvas.drawCircle(center, 8, Paint()..color = Colors.white);
+        // Draw cross
+        final crossPaint = Paint()..color = Colors.red..strokeWidth = 3;
+        canvas.drawLine(center + Offset(-6, 0), center + Offset(6, 0), crossPaint);
+        canvas.drawLine(center + Offset(0, -6), center + Offset(0, 6), crossPaint);
+        break;
+        
+      case PowerUpType.frenzy:
+        paint.color = Colors.orange;
+        canvas.drawCircle(center, 12, paint);
+        paint.color = Colors.yellow;
+        canvas.drawCircle(center, 8, paint);
+        // Draw lightning bolt
+        final boltPaint = Paint()..color = Colors.white..strokeWidth = 2;
+        canvas.drawLine(center + Offset(-4, -6), center + Offset(2, 0), boltPaint);
+        canvas.drawLine(center + Offset(2, 0), center + Offset(-2, 6), boltPaint);
+        break;
+        
+      case PowerUpType.magnet:
+        paint.color = Colors.blue;
+        canvas.drawCircle(center, 12, paint);
+        // Draw magnet U-shape
+        final magnetPaint = Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 3;
+        canvas.drawArc(Rect.fromLTWH(center.dx - 8, center.dy - 4, 16, 16), 0, -pi, false, magnetPaint);
+        break;
+        
+      case PowerUpType.nuke:
+        paint.color = Colors.purple;
+        canvas.drawCircle(center, 12, paint);
+        paint.color = Colors.yellow;
+        canvas.drawCircle(center, 8, paint);
+        // Draw explosion symbol
+        final expPaint = Paint()..color = Colors.red..strokeWidth = 2;
+        for (int i = 0; i < 8; i++) {
+          final angle = (i * pi / 4);
+          final start = center + Offset(cos(angle) * 4, sin(angle) * 4);
+          final end = center + Offset(cos(angle) * 10, sin(angle) * 10);
+          canvas.drawLine(start, end, expPaint);
+        }
+        break;
+    }
+    
+    // Glow effect
+    final glowPaint = Paint()
+      ..color = paint.color.withOpacity(0.3)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawCircle(center, 15, glowPaint);
   }
 }
 
@@ -1305,8 +1710,8 @@ class ShooterEnemy extends Enemy {
 
     if (!_isShooting) {
         if (velocity.length > 10) {
-           // Use Running for movement if Walk is missing or for consistency
-           _animator.play("Running");
+           // Use running for movement if Walk is missing or for consistency
+           _animator.play("running");
         } else {
            _animator.play("Standard Idle");
         }
@@ -1324,7 +1729,9 @@ class ShooterEnemy extends Enemy {
   }
 }
 
-enum EnemyModifier { none, swift, ghostly, regen }
+enum EnemyModifier { none, swift, ghostly, regen, kamikaze, shieldBearer, summoner }
+
+enum PowerUpType { health, frenzy, magnet, nuke }
 
 // --- MISSING CLASSES RESTORED ---
 
@@ -1502,16 +1909,27 @@ class HurricaneKickEffect extends PositionComponent {
   }
 }
 
-class DashCooldownBar extends PositionComponent {
+class DashCooldownBar extends PositionComponent with HasVisibility {
   final Player player;
   final Paint _barPaint = Paint()..style = PaintingStyle.fill;
   final Paint _bgPaint = Paint()..color = Colors.black.withOpacity(0.5)..style = PaintingStyle.fill;
   final Paint _borderPaint = Paint()..color = Colors.white.withOpacity(0.5)..style = PaintingStyle.stroke..strokeWidth = 1;
 
-  DashCooldownBar(this.player) : super(size: Vector2(40, 6), anchor: Anchor.center);
+  DashCooldownBar(this.player) : super(size: Vector2(40, 6), anchor: Anchor.center) {
+    isVisible = false; // Start hidden
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    // Only show when cooldown is active (charging)
+    isVisible = player.currentDashCooldown > 0;
+  }
 
   @override
   void render(Canvas canvas) {
+     if (!isVisible) return;
+     
      // Background
      canvas.drawRect(size.toRect(), _bgPaint);
      canvas.drawRect(size.toRect(), _borderPaint);
