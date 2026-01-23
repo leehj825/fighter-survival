@@ -96,7 +96,18 @@ class StickmanAnimator {
 
   void play(String animationName) {
     if (_clips.containsKey(animationName)) {
+      // Don't interrupt if the same animation is already playing
       if (controller.activeClip?.name == animationName && controller.isPlaying) return;
+      
+      // Don't interrupt tap attack animations (Hook/Hook Punch) if they're still playing
+      String? currentClip = controller.activeClip?.name;
+      if ((currentClip == "Hook" || currentClip == "Hook Punch") && controller.isPlaying) {
+        // Only allow interruption if the new animation is higher priority (dash, slash)
+        if (animationName != "Round Kick" && animationName != "Roundhouse Kick" && 
+            animationName != "magic") {
+          return; // Don't interrupt tap attack with movement/idle
+        }
+      }
 
       controller.activeClip = _clips[animationName];
       // Start magic animation from frame 50

@@ -856,19 +856,38 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     // Update Animator
     _animator.isAttacking = isSlashing;
 
+    // Check if tap attack animation is still actively playing
+    String? currentClipName = _animator.controller.activeClip?.name;
+    bool isTapAttackPlaying = _isTapAttacking && 
+        (currentClipName == "Hook" || currentClipName == "Hook Punch") &&
+        _animator.isPlaying;
+
+    // Check if actually moving (both velocity and moveDirection checks)
+    bool isActuallyMoving = velocity.length > 5 || 
+        (moveDirection != null && moveDirection!.length > 0.1);
+
     // Animation Logic
-    // Animation Logic
+    // Priority: Dash > Slash > Tap Attack (if playing) > Movement > Idle
     if (isDashing) {
       // Alternate between Round Kick and Roundhouse Kick
       _animator.play(_useRoundKick ? "Round Kick" : "Roundhouse Kick");
       _useRoundKick = !_useRoundKick;
     } else if (isSlashing) {
       _animator.play("magic");
-    } else if (velocity.length > 10) {
-      // Play "running" (File name matches asset)
-      _animator.play("running");
+    } else if (isTapAttackPlaying) {
+      // Let tap attack animation finish - don't override with movement or idle
+      // Do nothing, let the animation continue playing until it finishes
+    } else if (isActuallyMoving) {
+      // Play "running" only if actually moving
+      if (currentClipName != "running") {
+        _animator.play("running");
+      }
     } else {
-      _animator.play("Standard Idle");
+      // Not moving and not attacking - play idle
+      // Force idle if not moving and not in any attack animation
+      if (currentClipName != "Standard Idle") {
+        _animator.play("Standard Idle");
+      }
     }
 
     // Pass velocity to animator for direction calculation (3D facing)
@@ -957,11 +976,25 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
       }
     }
     
-    // Reset attacking state after a short delay (faster completion)
-    Future.delayed(const Duration(milliseconds: 200), () {
+    // Reset attacking state after animation completes
+    // Hook/Hook Punch animations are sped up 2.5x, so they should complete faster
+    // Wait for animation to actually finish playing
+    Future.delayed(const Duration(milliseconds: 300), () {
       if (!isRemoved) {
-        _animator.isAttacking = false;
-        _isTapAttacking = false;
+        // Only reset if animation has finished or is no longer the active clip
+        String? currentClip = _animator.controller.activeClip?.name;
+        if (currentClip != "Hook" && currentClip != "Hook Punch") {
+          _animator.isAttacking = false;
+          _isTapAttacking = false;
+        } else {
+          // Check again after a bit more time
+          Future.delayed(const Duration(milliseconds: 200), () {
+            if (!isRemoved) {
+              _animator.isAttacking = false;
+              _isTapAttacking = false;
+            }
+          });
+        }
       }
     });
   }
@@ -1636,6 +1669,7 @@ class ShooterEnemy extends Enemy {
   bool _isShooting = false;
   double _shootingAnimationTimer = 0.0;
   bool _hasFired = false;
+  String? _lastActiveClipName; // Track previous animation to detect completion
 
   ShooterEnemy() : super();
 
@@ -1665,14 +1699,37 @@ class ShooterEnemy extends Enemy {
 
     if (_isShooting) {
        _shootingAnimationTimer += dt;
-       // Wait for animation to finish or timeout
-       if (!_animator.isPlaying || _shootingAnimationTimer > 0.8) {
-          if (!_hasFired) {
-             gameRef.world.add(ArrowProjectile(position, gameRef.player.position));
-             _hasFired = true;
-          }
-          _isShooting = false;
+       
+       // Check if "Shooting Arrow" animation has completed
+       String? currentClipName = _animator.controller.activeClip?.name;
+       bool animationFinished = false;
+       
+       // If animation changed from "Shooting Arrow" to something else, it finished
+       if (_lastActiveClipName == "Shooting Arrow" && currentClipName != "Shooting Arrow") {
+         animationFinished = true;
        }
+       // If animation stopped playing (reached end)
+       else if (!_animator.isPlaying && _lastActiveClipName == "Shooting Arrow") {
+         animationFinished = true;
+       }
+       // Timeout fallback (animation is sped up 5x, so should complete in ~0.2s)
+       else if (_shootingAnimationTimer > 0.3) {
+         animationFinished = true;
+       }
+       
+       // Fire arrow when animation completes
+       if (animationFinished && !_hasFired) {
+         gameRef.world.add(ArrowProjectile(position, gameRef.player.position));
+         _hasFired = true;
+       }
+       
+       if (animationFinished) {
+         _isShooting = false;
+         _shootingAnimationTimer = 0.0;
+         _hasFired = false; // Reset for next shot
+       }
+       
+       _lastActiveClipName = currentClipName;
     } else {
       if (_knockbackVelocity.length > 5) {
         velocity = _knockbackVelocity;
@@ -1710,8 +1767,13 @@ class ShooterEnemy extends Enemy {
 
     if (!_isShooting) {
         if (velocity.length > 10) {
-           // Use running for movement if Walk is missing or for consistency
-           _animator.play("running");
+           // Use walking animation for shooter enemy
+           // The play() method will only play if the clip exists, so safe to try
+           _animator.play("walking");
+           // If walking doesn't exist, fallback to running (handled by checking active clip)
+           if (_animator.controller.activeClip?.name != "walking") {
+             _animator.play("running");
+           }
         } else {
            _animator.play("Standard Idle");
         }
