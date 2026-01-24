@@ -562,10 +562,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
       _lastActionTime = DateTime.now();
 
       // Tap to attack (damage enemies with alternating Hook/Hook Punch)
-      // Only if blaster is NOT unlocked (when unlocked, use joystick for shooting)
-      if (!GameData().unlockBlaster) {
-        player.tapAttack();
-      }
+      player.tapAttack();
     }
   }
 
@@ -784,9 +781,6 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   bool _useRoundKick = true; // Alternate between Round Kick and Roundhouse Kick
   bool _useHook = true; // Alternate between Hook and Hook Punch
   
-  // Attack state to prevent stacking
-  bool _isTapAttacking = false;
-
   // NEW: Animator
   late StickmanAnimator _animator;
 
@@ -856,26 +850,24 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     // Update Animator
     _animator.isAttacking = isSlashing;
 
-    // Check if tap attack animation is still actively playing
     String? currentClipName = _animator.controller.activeClip?.name;
-    bool isTapAttackPlaying = _isTapAttacking && 
-        (currentClipName == "Hook" || currentClipName == "Hook Punch") &&
-        _animator.isPlaying;
+    // Check if punch animation is actively playing
+    bool isPunching = (currentClipName == "Hook" || currentClipName == "Hook Punch") && _animator.isPlaying;
 
     // Check if actually moving (both velocity and moveDirection checks)
     bool isActuallyMoving = velocity.length > 5 || 
         (moveDirection != null && moveDirection!.length > 0.1);
 
     // Animation Logic
-    // Priority: Dash > Slash > Tap Attack (if playing) > Movement > Idle
+    // Priority: Dash > Slash > Punch > Movement > Idle
     if (isDashing) {
       // Alternate between Round Kick and Roundhouse Kick
       _animator.play(_useRoundKick ? "Round Kick" : "Roundhouse Kick");
       _useRoundKick = !_useRoundKick;
     } else if (isSlashing) {
       _animator.play("magic");
-    } else if (isTapAttackPlaying) {
-      // Let tap attack animation finish - don't override with movement or idle
+    } else if (isPunching) {
+      // Let punch animation finish - don't override with movement or idle
       // Do nothing, let the animation continue playing until it finishes
     } else if (isActuallyMoving) {
       // Play "running" only if actually moving
@@ -952,18 +944,16 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   }
 
   void tapAttack() {
-    // Prevent stacking attacks
-    if (_isTapAttacking) return;
-    _isTapAttacking = true;
-    
-    // Play alternating Hook/Hook Punch animation with faster speed
+    // Prevent stacking attacks if already punching
+    String? currentClip = _animator.controller.activeClip?.name;
+    bool isPunching = (currentClip == "Hook" || currentClip == "Hook Punch") && _animator.isPlaying;
+    if (isPunching) return;
+
+    // Play alternating Hook/Hook Punch animation
     final String animName = _useHook ? "Hook" : "Hook Punch";
     _animator.play(animName);
     _useHook = !_useHook;
-    _animator.isAttacking = true;
-    
-    // Speed up the animation by modifying the animator's clip speed
-    // This will be handled in stickman_animator.dart
+    _animator.isAttacking = true; // Use legacy flag for damage/lean if needed
     
     // Damage nearby enemies
     for (final child in gameRef.world.children) {
@@ -975,28 +965,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
         }
       }
     }
-    
-    // Reset attacking state after animation completes
-    // Hook/Hook Punch animations are sped up 2.5x, so they should complete faster
-    // Wait for animation to actually finish playing
-    Future.delayed(const Duration(milliseconds: 300), () {
-      if (!isRemoved) {
-        // Only reset if animation has finished or is no longer the active clip
-        String? currentClip = _animator.controller.activeClip?.name;
-        if (currentClip != "Hook" && currentClip != "Hook Punch") {
-          _animator.isAttacking = false;
-          _isTapAttacking = false;
-        } else {
-          // Check again after a bit more time
-          Future.delayed(const Duration(milliseconds: 200), () {
-            if (!isRemoved) {
-              _animator.isAttacking = false;
-              _isTapAttacking = false;
-            }
-          });
-        }
-      }
-    });
+    // No need to manually reset state; Player.update handles state priority based on _animator.isPlaying
   }
 
   void gainXp(int amount) {
