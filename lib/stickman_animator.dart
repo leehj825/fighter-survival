@@ -95,6 +95,7 @@ class StickmanAnimator {
   }
 
   void play(String animationName) {
+    // Check if clip exists, but also handle case where it might not
     if (_clips.containsKey(animationName)) {
       // Don't interrupt if the same animation is already playing
       if (controller.activeClip?.name == animationName && controller.isPlaying) return;
@@ -102,10 +103,11 @@ class StickmanAnimator {
       // Don't interrupt tap attack animations (Hook/Hook Punch) if they're still playing
       String? currentClip = controller.activeClip?.name;
       if ((currentClip == "Hook" || currentClip == "Hook Punch") && controller.isPlaying) {
-        // Only allow interruption if the new animation is higher priority (dash, slash)
+        // Only allow interruption if the new animation is higher priority (dash, slash, shooting, idle)
         if (animationName != "Round Kick" && animationName != "Roundhouse Kick" && 
-            animationName != "magic") {
-          return; // Don't interrupt tap attack with movement/idle
+            animationName != "magic" && animationName != "Shooting Arrow" &&
+            animationName != "idle") {
+          return; // Don't interrupt tap attack with movement
         }
       }
 
@@ -114,6 +116,10 @@ class StickmanAnimator {
       controller.currentFrameIndex = (animationName == "magic") ? 50 : 0;
       controller.setMode(EditorMode.animate);
       controller.isPlaying = true;
+      debugPrint('Playing animation: $animationName');
+    } else {
+      // Debug: Log which animation is missing
+      debugPrint('Animation "$animationName" not found in clips. Available: ${_clips.keys.toList()}');
     }
   }
 

@@ -27,8 +27,8 @@ extension SafeVector2 on Vector2 {
 
 /// A simple virtual joystick component
 class VirtualJoystick extends PositionComponent with HasVisibility {
-  final double knobRadius = 20;
-  final double baseRadius = 50;
+  final double knobRadius = 15; // Reduced from 20
+  final double baseRadius = 35; // Reduced from 50
 
   Vector2 _knobPos = Vector2.zero();
 
@@ -36,7 +36,7 @@ class VirtualJoystick extends PositionComponent with HasVisibility {
   final Paint _baseStroke = Paint()..color = Colors.white.withOpacity(0.4)..style = PaintingStyle.stroke..strokeWidth = 2;
   final Paint _knobPaint = Paint()..color = Colors.cyanAccent.withOpacity(0.8);
 
-  VirtualJoystick() : super(anchor: Anchor.center, size: Vector2.all(100)) {
+  VirtualJoystick() : super(anchor: Anchor.center, size: Vector2.all(70)) { // Reduced from 100
     isVisible = false;
   }
 
@@ -84,7 +84,7 @@ class ActionButton extends PositionComponent {
           ..color = Colors.white.withOpacity(0.8)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2,
-        super(anchor: Anchor.center, size: Vector2.all(80));
+        super(anchor: Anchor.center, size: Vector2.all(60)); // Reduced from 80
 
   @override
   Future<void> onLoad() async {
@@ -246,14 +246,14 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     // Add Right Joystick for Blaster (if unlocked)
     // Initialize it but keep it hidden until blaster is unlocked
     rightJoystick = VirtualJoystick()..priority = 200;
-    rightJoystick.position = Vector2(size.x - 150, size.y - 150); // Right side, fixed position
+    rightJoystick.position = Vector2(size.x - 110, size.y - 110); // Right side, smaller position for smaller joystick
     rightJoystick.isVisible = GameData().unlockBlaster; // Only visible when blaster is unlocked
     hud.add(rightJoystick);
 
     // Add Action Buttons
     slashButton = ActionButton(label: "SLASH", color: Colors.redAccent)
       ..priority = 200
-      ..position = Vector2(size.x - 100, size.y - 80);
+      ..position = Vector2(size.x - 80, size.y - 70); // Adjusted for smaller button
     hud.add(slashButton);
 
     // Initial Wave
@@ -270,9 +270,9 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
   void onGameResize(Vector2 size) {
     super.onGameResize(size);
     if (isLoaded) {
-      slashButton.position = Vector2(size.x - 100, size.y - 80);
+      slashButton.position = Vector2(size.x - 80, size.y - 70); // Adjusted for smaller button
       if (rightJoystick.isLoaded) {
-        rightJoystick.position = Vector2(size.x - 150, size.y - 150);
+        rightJoystick.position = Vector2(size.x - 110, size.y - 110); // Adjusted for smaller joystick
         rightJoystick.isVisible = GameData().unlockBlaster;
       }
     }
@@ -499,7 +499,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
            enemy.takeDamage((20 * player.damageMult).toInt());
         }
 
-        // Check SLASH Hit
+        // Check SLASH Hit (Magic)
         if (player.isSlashing && dist < (combinedRadius + 60)) {
            enemy.takeDamage((10 * player.damageMult).toInt(), knockbackDir: enemy.position - player.position);
         }
@@ -811,7 +811,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     );
 
     // Set default animation
-    _animator.play("Standard Idle");
+    _animator.play("idle");
 
     // Add Dash Cooldown Bar
     add(DashCooldownBar(this)..position = Vector2(size.x / 2, -10));
@@ -862,9 +862,9 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
         (currentClipName == "Hook" || currentClipName == "Hook Punch") &&
         _animator.isPlaying;
 
-    // Check if actually moving (both velocity and moveDirection checks)
-    bool isActuallyMoving = velocity.length > 5 || 
-        (moveDirection != null && moveDirection!.length > 0.1);
+    // Check if actually moving based on calculated velocity
+    // velocity.length > 5 means player moved this frame
+    bool isActuallyMoving = velocity.length > 5;
 
     // Animation Logic
     // Priority: Dash > Slash > Tap Attack (if playing) > Movement > Idle
@@ -878,16 +878,12 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
       // Let tap attack animation finish - don't override with movement or idle
       // Do nothing, let the animation continue playing until it finishes
     } else if (isActuallyMoving) {
-      // Play "running" only if actually moving
-      if (currentClipName != "running") {
-        _animator.play("running");
-      }
+      // Playing "running" only if currently moving
+      _animator.play("running");
     } else {
       // Not moving and not attacking - play idle
-      // Force idle if not moving and not in any attack animation
-      if (currentClipName != "Standard Idle") {
-        _animator.play("Standard Idle");
-      }
+      // Always ensure idle is playing when not moving
+      _animator.play("idle");
     }
 
     // Pass velocity to animator for direction calculation (3D facing)
@@ -922,6 +918,11 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     } else {
       _dashDirection = Vector2(1, 0);
     }
+    
+    // Show dash impact effect
+    final dashImpact = DashImpactEffect();
+    dashImpact.position = size / 2;
+    add(dashImpact);
   }
 
   void slash() {
@@ -975,6 +976,11 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
         }
       }
     }
+    
+    // Show punch impact effect
+    final punchImpact = PunchImpactEffect();
+    punchImpact.position = size / 2;
+    add(punchImpact);
     
     // Reset attacking state after animation completes
     // Hook/Hook Punch animations are sped up 2.5x, so they should complete faster
@@ -1170,7 +1176,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     );
 
     // Set default animation
-    _animator.play("Standard Idle");
+    _animator.play("idle");
   }
 
   @override
@@ -1276,7 +1282,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
        if (velocity.length > 10) {
        _animator.play("running"); // Mapped to "Standard Run" intent but file uses "running"
        } else {
-          _animator.play("Standard Idle");
+          _animator.play("idle");
        }
     }
 
@@ -1685,7 +1691,7 @@ class ShooterEnemy extends Enemy {
       weaponType: WeaponType.none, // Remove bow image for Shooter per request (animation handles visual)
       data: gameRef.animationData
     );
-    _animator.play("Standard Idle");
+    _animator.play("idle");
   }
 
   @override
@@ -1700,9 +1706,16 @@ class ShooterEnemy extends Enemy {
     if (_isShooting) {
        _shootingAnimationTimer += dt;
        
-       // Check if "Shooting Arrow" animation has completed
+       // Track the current animation
        String? currentClipName = _animator.controller.activeClip?.name;
+       
+       // Check if "Shooting Arrow" animation has completed
        bool animationFinished = false;
+       
+       // If we just started shooting and haven't tracked it yet
+       if (_lastActiveClipName == null || _lastActiveClipName != "Shooting Arrow") {
+         _lastActiveClipName = currentClipName;
+       }
        
        // If animation changed from "Shooting Arrow" to something else, it finished
        if (_lastActiveClipName == "Shooting Arrow" && currentClipName != "Shooting Arrow") {
@@ -1713,7 +1726,7 @@ class ShooterEnemy extends Enemy {
          animationFinished = true;
        }
        // Timeout fallback (animation is sped up 5x, so should complete in ~0.2s)
-       else if (_shootingAnimationTimer > 0.3) {
+       else if (_shootingAnimationTimer > 0.4) {
          animationFinished = true;
        }
        
@@ -1727,9 +1740,8 @@ class ShooterEnemy extends Enemy {
          _isShooting = false;
          _shootingAnimationTimer = 0.0;
          _hasFired = false; // Reset for next shot
+         _lastActiveClipName = null; // Reset tracking
        }
-       
-       _lastActiveClipName = currentClipName;
     } else {
       if (_knockbackVelocity.length > 5) {
         velocity = _knockbackVelocity;
@@ -1775,7 +1787,7 @@ class ShooterEnemy extends Enemy {
              _animator.play("running");
            }
         } else {
-           _animator.play("Standard Idle");
+           _animator.play("idle");
         }
     }
 
@@ -1930,7 +1942,7 @@ class HurricaneKickEffect extends PositionComponent {
     ..strokeWidth = 3.0
     ..strokeCap = StrokeCap.round;
 
-  HurricaneKickEffect() : super(anchor: Anchor.center, size: Vector2.all(100)); // Larger area
+  HurricaneKickEffect() : super(anchor: Anchor.center, size: Vector2.all(180)); // Matches 60-unit damage radius
 
   @override
   void update(double dt) {
@@ -1952,19 +1964,95 @@ class HurricaneKickEffect extends PositionComponent {
     _paint.color = Colors.cyanAccent.withOpacity(opacity);
 
     canvas.save();
-    // Center logic: Move to center of component (50, 50) since size is 100
+    // Center logic: Move to center of component
     canvas.translate(size.x / 2, size.y / 2);
     canvas.rotate(progress * pi * 4); // Fast spin
 
-    // Draw spiral lines
+    // Draw spiral lines for magic circle - scaled to match damage radius
     for(int i=0; i<3; i++) {
        canvas.drawArc(
-         Rect.fromCircle(center: Offset.zero, radius: 40 + (i * 5) + (progress * 20)),
-         (i * 2.0),
+         Rect.fromCircle(center: Offset.zero, radius: 45 + (i * 12) + (progress * 30)),
+         (i * 1.5),
          2.0,
          false,
          _paint
        );
+    }
+
+    canvas.restore();
+  }
+}
+
+class DashImpactEffect extends PositionComponent {
+  double _lifeTime = 0.0;
+  static const double _duration = 0.25; // Quick dash impact
+  final Paint _paint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2.5
+    ..strokeCap = StrokeCap.round;
+
+  DashImpactEffect() : super(anchor: Anchor.center, size: Vector2.all(40)); // Dash radius + 10
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _lifeTime += dt;
+    if (_lifeTime >= _duration) {
+      removeFromParent();
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    double progress = _lifeTime / _duration;
+    double opacity = (1.0 - progress).clamp(0.0, 1.0);
+    _paint.color = Colors.yellowAccent.withOpacity(opacity);
+
+    canvas.save();
+    canvas.translate(size.x / 2, size.y / 2);
+
+    // Draw expanding rings for dash impact
+    for (int i = 0; i < 2; i++) {
+      double radius = 10 + (i * 8) + (progress * 15);
+      canvas.drawCircle(Offset.zero, radius, _paint);
+    }
+
+    canvas.restore();
+  }
+}
+
+class PunchImpactEffect extends PositionComponent {
+  double _lifeTime = 0.0;
+  static const double _duration = 0.3; // Punch impact duration
+  final Paint _paint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2.5
+    ..strokeCap = StrokeCap.round;
+
+  PunchImpactEffect() : super(anchor: Anchor.center, size: Vector2.all(160)); // Punch radius + 40
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _lifeTime += dt;
+    if (_lifeTime >= _duration) {
+      removeFromParent();
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    double progress = _lifeTime / _duration;
+    double opacity = (1.0 - progress).clamp(0.0, 1.0);
+    _paint.color = Colors.orangeAccent.withOpacity(opacity);
+
+    canvas.save();
+    canvas.translate(size.x / 2, size.y / 2);
+
+    // Draw expanding circles for punch impact
+    for (int i = 0; i < 2; i++) {
+      double radius = 25 + (i * 15) + (progress * 30);
+      canvas.drawCircle(Offset.zero, radius, _paint);
     }
 
     canvas.restore();

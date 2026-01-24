@@ -13,7 +13,7 @@ class AdManager {
   
 
   // Google-provided test banner (safe to use during development and for APK/non-bundle builds)
-  static const String admobBannerTestId = 'ca-app-pub-4400173019354346/8395964292';
+  static const String admobBannerTestId = 'ca-app-pub-3940256099942544/6300978111';
 
   // Set at build time via --dart-define=BUNDLE_BUILT=true for App Bundle releases.
   static const bool isBundleBuild = bool.fromEnvironment('BUNDLE_BUILT', defaultValue: false);
