@@ -71,7 +71,7 @@ class VirtualJoystick extends PositionComponent with HasVisibility {
   }
 }
 
-class ActionButton extends PositionComponent {
+class ActionButton extends PositionComponent with HasVisibility {
   final String label;
   final Color color;
   final Paint _bgPaint;
@@ -84,7 +84,9 @@ class ActionButton extends PositionComponent {
           ..color = Colors.white.withOpacity(0.8)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2,
-        super(anchor: Anchor.center, size: Vector2.all(60)); // Reduced from 80
+        super(anchor: Anchor.center, size: Vector2.all(60)) { // Reduced from 80
+    isVisible = false; // Hidden by default, shown when unlocked
+  }
 
   @override
   Future<void> onLoad() async {
@@ -100,6 +102,7 @@ class ActionButton extends PositionComponent {
 
   @override
   void render(Canvas canvas) {
+    if (!isVisible) return;
     canvas.drawCircle(Offset(size.x / 2, size.y / 2), size.x / 2, _bgPaint);
     canvas.drawCircle(Offset(size.x / 2, size.y / 2), size.x / 2, _strokePaint);
 
@@ -173,6 +176,8 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
   // Action Gesture State
   Vector2? _lastActionPos;
   DateTime? _lastActionTime;
+  bool _dashTriggered = false; // Track if dash was triggered during this touch
+  double _actionTouchDistance = 0.0; // Track total distance moved during action touch
   
   // Shoot direction from right joystick
   Vector2? _shootDirection;
@@ -246,14 +251,15 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     // Add Right Joystick for Blaster (if unlocked)
     // Initialize it but keep it hidden until blaster is unlocked
     rightJoystick = VirtualJoystick()..priority = 200;
-    rightJoystick.position = Vector2(size.x - 110, size.y - 110); // Right side, smaller position for smaller joystick
+    rightJoystick.position = Vector2(size.x - 150, size.y - 150); // Moved inward to avoid overlap with magic button
     rightJoystick.isVisible = GameData().unlockBlaster; // Only visible when blaster is unlocked
     hud.add(rightJoystick);
 
     // Add Action Buttons
     slashButton = ActionButton(label: "SLASH", color: Colors.redAccent)
       ..priority = 200
-      ..position = Vector2(size.x - 80, size.y - 70); // Adjusted for smaller button
+      ..position = Vector2(size.x - 80, size.y - 70) // Adjusted for smaller button
+      ..isVisible = GameData().unlockMagic; // Only visible when magic is unlocked
     hud.add(slashButton);
 
     // Initial Wave
@@ -271,8 +277,9 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     super.onGameResize(size);
     if (isLoaded) {
       slashButton.position = Vector2(size.x - 80, size.y - 70); // Adjusted for smaller button
+      slashButton.isVisible = GameData().unlockMagic; // Update visibility on resize
       if (rightJoystick.isLoaded) {
-        rightJoystick.position = Vector2(size.x - 110, size.y - 110); // Adjusted for smaller joystick
+        rightJoystick.position = Vector2(size.x - 150, size.y - 150); // Moved inward to avoid overlap with magic button
         rightJoystick.isVisible = GameData().unlockBlaster;
       }
     }
@@ -504,9 +511,11 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
            enemy.takeDamage((10 * player.damageMult).toInt(), knockbackDir: enemy.position - player.position);
         }
 
-        // Check PLAYER DAMAGE Hit
+        // Check PLAYER DAMAGE Hit (Enemy Melee)
         if (!player.isDashing && dist < combinedRadius) {
-          player.takeDamage(10);
+          // Elite enemies deal more damage
+          int damage = enemy.isElite ? 20 : 10;
+          player.takeDamage(damage, fromEnemyMelee: true);
         }
       }
     }
@@ -523,7 +532,8 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     final Vector2 startPos = info.eventPosition.widget;
 
     // 1. Check Button first
-    if (slashButton.containsPoint(startPos - hud.position)) {
+    // Only allow slash if magic is unlocked and button is visible
+    if (GameData().unlockMagic && slashButton.isVisible && slashButton.containsPoint(startPos - hud.position)) {
         player.slash(); // Fixed: Handle slash here
         return;
     }
@@ -560,12 +570,9 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
       _actionPointerId = pointerId;
       _lastActionPos = startPos;
       _lastActionTime = DateTime.now();
-
-      // Tap to attack (damage enemies with alternating Hook/Hook Punch)
-      // Only if blaster is NOT unlocked (when unlocked, use joystick for shooting)
-      if (!GameData().unlockBlaster) {
-        player.tapAttack();
-      }
+      _dashTriggered = false; // Reset dash flag
+      _actionTouchDistance = 0.0; // Reset distance tracking
+      // Do NOT call tapAttack() here - wait for release
     }
   }
 
@@ -607,21 +614,37 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
 
     // Handle Dash Swipe
     if (pointerId == _actionPointerId && _lastActionPos != null) {
+      // 1. Calculate distance from the LAST RECORDED position
+      final double dist = currentPos.distanceTo(_lastActionPos!);
+      
+      // Track total distance moved
+      _actionTouchDistance += dist;
+
+      // 2. CRITICAL CHANGE: Only process if moved enough (> 10 pixels)
+      // If we moved less, we RETURN immediately.
+      // We do NOT update _lastActionPos, allowing movement to accumulate over multiple frames.
+      if (dist < 10) return;
+
       final DateTime now = DateTime.now();
       if (_lastActionTime != null) {
         final double dtSeconds = now.difference(_lastActionTime!).inMicroseconds / 1000000.0;
-        if (dtSeconds > 0) {
-          final double dist = currentPos.distanceTo(_lastActionPos!);
+        
+        // Ensure strictly positive time to avoid division by zero
+        if (dtSeconds > 0.001) { 
           final double velocity = dist / dtSeconds;
 
-          if (velocity > dashVelocityThreshold && dist > 10) {
+          // Check velocity
+          if (velocity > dashVelocityThreshold) {
              Vector2 dashDir = currentPos - _lastActionPos!;
              if (!dashDir.isNaN) {
                 player.dash(dashDir);
+                _dashTriggered = true; // Mark that dash was triggered
              }
           }
         }
       }
+      
+      // 3. Reset state ONLY after we processed a significant chunk of movement
       _lastActionPos = currentPos;
       _lastActionTime = now;
     }
@@ -654,8 +677,21 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     }
 
     if (pointerId == _actionPointerId) {
+      // Only trigger punch if:
+      // 1. Dash was NOT triggered (was a tap, not a swipe)
+      // 2. Total distance moved was small (was a tap, not a drag)
+      // 3. Player is NOT currently dashing
+      // Note: Punch works even when blaster is unlocked (right joystick is for shooting, action pointer is for dash/punch)
+      if (!_dashTriggered && 
+          _actionTouchDistance < 50 && 
+          !player.isDashing) {
+        player.tapAttack();
+      }
+      
       _actionPointerId = null;
       _lastActionPos = null;
+      _dashTriggered = false;
+      _actionTouchDistance = 0.0;
     }
   }
 
@@ -787,6 +823,9 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   // Attack state to prevent stacking
   bool _isTapAttacking = false;
 
+  // NEW: Track facing direction for aiming attacks (Default right)
+  Vector2 _facingDirection = Vector2(1, 0);
+
   // NEW: Animator
   late StickmanAnimator _animator;
 
@@ -851,56 +890,56 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     } else if (moveDirection != null && moveDirection != Vector2.zero()) {
       velocity = moveDirection! * _baseSpeed;
       position.add(velocity * dt);
+      
+      // NEW: Update facing direction when moving
+      if (velocity.length > 0) {
+        _facingDirection = velocity.normalized();
+      }
     }
 
     // Update Animator
     _animator.isAttacking = isSlashing;
 
-    // Check if tap attack animation is still actively playing
-    String? currentClipName = _animator.controller.activeClip?.name;
-    bool isTapAttackPlaying = _isTapAttacking && 
-        (currentClipName == "Hook" || currentClipName == "Hook Punch") &&
-        _animator.isPlaying;
+    // Check if tap attack animation is actively playing based on our flag
+    bool isTapAttackPlaying = _isTapAttacking;
+    
+    // Don't reset here - let the animation complete fully
+    // The reset timer in tapAttack() will handle it
 
-    // Check if actually moving based on calculated velocity
-    // velocity.length > 5 means player moved this frame
-    bool isActuallyMoving = velocity.length > 5;
-
-    // Animation Logic
-    // Priority: Dash > Slash > Tap Attack (if playing) > Movement > Idle
+    // Determine Animation
     if (isDashing) {
-      // Alternate between Round Kick and Roundhouse Kick
       _animator.play(_useRoundKick ? "Round Kick" : "Roundhouse Kick");
       _useRoundKick = !_useRoundKick;
     } else if (isSlashing) {
       _animator.play("magic");
     } else if (isTapAttackPlaying) {
-      // Let tap attack animation finish - don't override with movement or idle
-      // Do nothing, let the animation continue playing until it finishes
-    } else if (isActuallyMoving) {
-      // Playing "running" only if currently moving
+      // Do nothing, let the punch play out.
+      // The Reset logic in tapAttack() handles returning to state.
+    } else if (velocity.length > 5) {
       _animator.play("running");
     } else {
-      // Not moving and not attacking - play idle
-      // Always ensure idle is playing when not moving
       _animator.play("idle");
     }
 
+    // SPEED UP PUNCH: If attacking, pass a faster DT to the animator
+    // Note: Animation is already 2.5x faster in stickman_animator.dart (fps * 2.5)
+    // So we apply a moderate additional boost for even faster completion
+    double animDt = dt;
+    if (isTapAttackPlaying) {
+      animDt = dt * 2.0; // 2x additional speed (total ~5x faster than original)
+    }
+
     // Pass velocity to animator for direction calculation (3D facing)
-    _animator.update(dt, velocity, isDashing);
+    _animator.update(animDt, velocity, isDashing);
   }
 
   @override
   void render(Canvas canvas) {
-    // Shadow
     canvas.drawOval(
       Rect.fromCenter(center: (size / 2).toOffset() + const Offset(0, 20), width: width, height: width * 0.3),
       Paint()..color = Colors.black.withOpacity(0.3)
     );
-
-    // Render Procedural Stickman
-    // We pass (size/2) + offset so feet align with shadow
-    // Pass isDashing to render for the Punch pose
+    // Render facing direction for debug if needed? No, just render animator.
     _animator.render(canvas, Vector2(size.x / 2, size.y / 2 + 10), size.y, isDashing: isDashing);
   }
 
@@ -915,6 +954,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     if (direction.length > 0) {
       _dashDirection = direction.safeNormalized();
+      _facingDirection = _dashDirection; // Face dash direction
     } else {
       _dashDirection = Vector2(1, 0);
     }
@@ -926,6 +966,9 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   }
 
   void slash() {
+    // Check if magic is unlocked
+    if (!GameData().unlockMagic) return;
+    
     if (isSlashing || isDashing) return;
     isSlashing = true;
     _animator.isAttacking = true;
@@ -947,59 +990,73 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     if (_shootCooldown > 0) return; // Prevent spam
     // Frenzy halves cooldown
     _shootCooldown = _shootCooldownTime / (isFrenzyActive ? 2.0 : 1.0);
+    
+    // Face shooting direction
+    if (dir != Vector2.zero()) _facingDirection = dir.normalized();
+
     int sfxType = damageMult > 1.5 ? 1 : 0;
     SoundService.instance.playShoot(variant: sfxType);
     gameRef.world.add(PlayerProjectile(position, dir, damageMult));
   }
 
   void tapAttack() {
-    // Prevent stacking attacks
+    // 1. DISABLE PUNCH WHILE DASHING
+    if (isDashing) return;
+
+    // 2. Prevent Stacking: If already punching, ignore new taps
     if (_isTapAttacking) return;
     _isTapAttacking = true;
     
-    // Play alternating Hook/Hook Punch animation with faster speed
+    // Play Animation
     final String animName = _useHook ? "Hook" : "Hook Punch";
     _animator.play(animName);
     _useHook = !_useHook;
     _animator.isAttacking = true;
     
-    // Speed up the animation by modifying the animator's clip speed
-    // This will be handled in stickman_animator.dart
-    
-    // Damage nearby enemies
+    // 2. Directional Damage Logic
     for (final child in gameRef.world.children) {
       if (child is Enemy) {
-        final double dist = position.distanceTo(child.position);
+        final Vector2 toEnemy = child.position - position;
+        final double dist = toEnemy.length;
         final double combinedRadius = (size.x / 2) + (child.size.x / 2);
+        
+        // Range check (Punch range ~40)
         if (dist < (combinedRadius + 40)) {
-          child.takeDamage((15 * damageMult).toInt(), knockbackDir: child.position - position);
+          // Direction Check: Dot Product
+          // 1.0 = Directly in front, 0.0 = Side, -1.0 = Behind
+          // > 0.3 is roughly a 140-degree cone in front
+          Vector2 dirToEnemy = toEnemy.normalized();
+          double dot = _facingDirection.dot(dirToEnemy);
+          
+          if (dot > 0.3) { // 0.3 is a generous frontal cone (~140 degrees)
+             child.takeDamage((15 * damageMult).toInt(), knockbackDir: toEnemy);
+          }
         }
       }
     }
     
-    // Show punch impact effect
+    // Visual Effect
+    // Offset impact effect slightly forward to indicate direction
     final punchImpact = PunchImpactEffect();
-    punchImpact.position = size / 2;
+    punchImpact.position = (size / 2) + (_facingDirection * 20); 
     add(punchImpact);
     
-    // Reset attacking state after animation completes
-    // Hook/Hook Punch animations are sped up 2.5x, so they should complete faster
-    // Wait for animation to actually finish playing
-    Future.delayed(const Duration(milliseconds: 300), () {
-      if (!isRemoved) {
-        // Only reset if animation has finished or is no longer the active clip
-        String? currentClip = _animator.controller.activeClip?.name;
-        if (currentClip != "Hook" && currentClip != "Hook Punch") {
-          _animator.isAttacking = false;
-          _isTapAttacking = false;
-        } else {
-          // Check again after a bit more time
-          Future.delayed(const Duration(milliseconds: 200), () {
-            if (!isRemoved) {
-              _animator.isAttacking = false;
-              _isTapAttacking = false;
-            }
-          });
+    // 3. RESET: Wait for animation to complete fully
+    // Animation is ~300ms at normal speed
+    // With 2.5x fps boost in animator + 2.0x dt boost = ~60ms total
+    // Wait 200ms to ensure it completes fully and shows the full animation
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (!isRemoved && _isTapAttacking) {
+        _animator.isAttacking = false;
+        _isTapAttacking = false;
+        
+        // Force transition to idle/running if not already in another animation
+        if (!isDashing && !isSlashing) {
+          if (moveDirection != null && moveDirection!.length > 0.1) {
+            _animator.play("running");
+          } else {
+            _animator.play("idle");
+          }
         }
       }
     });
@@ -1022,8 +1079,17 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   }
 
   @override
-  void takeDamage(int amount) {
-    if (_damageCooldown > 0 || isDashing) return;
+  void takeDamage(int amount, {bool fromEnemyMelee = false}) {
+    // Dash invincibility only works against enemy melee attacks
+    // Not against traps, arrows, projectiles, or other sources
+    if (_damageCooldown > 0) return;
+    
+    // Dash protects against enemy melee attacks only
+    if (isDashing && fromEnemyMelee) {
+      return; // Invincible to enemy melee while dashing
+    }
+    
+    // Apply damage (either not dashing, or dashing but hit by non-melee source)
     SoundService.instance.playDamage();
     health -= amount;
     _damageCooldown = 1.0;
@@ -1138,7 +1204,9 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
 
   Enemy({this.isElite = false, this.modifier = EnemyModifier.none})
       : super(size: Vector2.all(isElite ? 100 : 50), anchor: Anchor.center) {
-     if(isElite) health = health * 30;
+     if(isElite) {
+       health = health * 50; // Increased from 30 to 50 (60 -> 100 HP)
+     }
      _maxHealth = health;
   }
 
@@ -1205,9 +1273,9 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
         velocity = dir * (_speed * 2.0); // Double speed
         position.add(velocity * dt);
         
-        // Explode on contact
+        // Explode on contact (enemy melee attack)
         if (distToPlayer < (size.x / 2 + gameRef.player.size.x / 2)) {
-          gameRef.player.takeDamage(30);
+          gameRef.player.takeDamage(30, fromEnemyMelee: true);
           takeDamage(9999); // Kill self
           gameRef.world.add(VisualEffects.createExplosion(position, scale: 2.0));
           return; // Exit early since we're dead
@@ -1254,26 +1322,38 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
         _knockbackVelocity.scale(0.9);
       } else {
         _knockbackVelocity.setZero();
-        _roamTimer -= dt;
-        if (_roamTimer <= 0 || _roamTarget == null) _pickNewTarget();
+        
+        // Elite enemies always chase player directly (no roaming)
+        if (isElite) {
+          Vector2 dirToPlayer = (gameRef.player.position - position).safeNormalized();
+          double currentSpeed = _speed * 1.2; // 20% faster than normal
+          velocity = dirToPlayer * currentSpeed;
+          position.add(velocity * dt);
+        } else {
+          // Normal enemies use roaming
+          _roamTimer -= dt;
+          if (_roamTimer <= 0 || _roamTarget == null) _pickNewTarget();
 
-        if (_roamTarget != null) {
-          final Vector2 dir = _roamTarget! - position;
-          if (dir.length < 5) {
-            _pickNewTarget();
-          } else {
-            double currentSpeed = _speed;
-            if (modifier == EnemyModifier.swift) currentSpeed *= 1.5;
-            if (modifier == EnemyModifier.shieldBearer) currentSpeed *= 0.7; // Slower
-            velocity = dir.safeNormalized() * currentSpeed;
-            position.add(velocity * dt);
+          if (_roamTarget != null) {
+            final Vector2 dir = _roamTarget! - position;
+            if (dir.length < 5) {
+              _pickNewTarget();
+            } else {
+              double currentSpeed = _speed;
+              if (modifier == EnemyModifier.swift) currentSpeed *= 1.5;
+              if (modifier == EnemyModifier.shieldBearer) currentSpeed *= 0.7; // Slower
+              velocity = dir.safeNormalized() * currentSpeed;
+              position.add(velocity * dt);
+            }
           }
         }
       }
     }
 
     // Attack Logic (Melee) - Skip for Kamikaze (they explode instead)
-    if (modifier != EnemyModifier.kamikaze && distToPlayer < size.x + 10) {
+    // Elite enemies have larger attack range
+    double attackRange = isElite ? size.x + 30 : size.x + 10;
+    if (modifier != EnemyModifier.kamikaze && distToPlayer < attackRange) {
        _animator.isAttacking = true;
        _animator.play("Kicking"); // Use kicking animation
     } else {
@@ -1329,7 +1409,11 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     
     gameRef.world.add(DamageText(amount, position.clone() + Vector2(0, -30)));
     health -= amount;
-    if (knockbackDir != null) _knockbackVelocity = knockbackDir.safeNormalized() * 400.0;
+    // Elite enemies take less knockback and are harder to push away
+    if (knockbackDir != null) {
+      double knockbackForce = isElite ? 200.0 : 400.0; // Elite takes 50% less knockback
+      _knockbackVelocity = knockbackDir.safeNormalized() * knockbackForce;
+    }
     _invulnerableTimer = 0.5;
     if (health <= 0) {
       health = 0;
@@ -1628,7 +1712,7 @@ class EnemyProjectile extends PositionComponent with HasGameRef<RpgGame> {
     if (_lifeTime > 3.0) removeFromParent();
 
     if (position.distanceTo(gameRef.player.position) < gameRef.player.size.x / 2) {
-      gameRef.player.takeDamage(10);
+      gameRef.player.takeDamage(10, fromEnemyMelee: false); // Projectile damage, not melee
       removeFromParent();
     }
   }
@@ -1892,7 +1976,7 @@ class SpikeTrap extends PositionComponent with HasGameRef<RpgGame> {
     super.update(dt);
     // Player collision
     if (gameRef.player.position.distanceTo(position) < 30) {
-       gameRef.player.takeDamage(5);
+       gameRef.player.takeDamage(5, fromEnemyMelee: false); // Trap damage, not melee
     }
   }
 

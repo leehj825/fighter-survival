@@ -513,6 +513,19 @@ class _WorkshopDialogState extends State<WorkshopDialog> {
                }
              ),
 
+             // Magic Unlock
+             _buildUnlockRow(
+               "Magic Attack",
+               "Tap Magic Button for Area Damage",
+               GameData.magicCost,
+               data.unlockMagic,
+               () {
+                 setState(() {
+                   data.buyMagic();
+                 });
+               }
+             ),
+
              const SizedBox(height: 20),
              TextButton(
                onPressed: () => Navigator.of(context).pop(),

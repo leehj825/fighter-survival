@@ -15,6 +15,7 @@ class GameData extends ChangeNotifier {
   int levelDash = 0; // -10% Cooldown per level
   int levelShield = 0; // Unlocks/Upgrades Shield
   bool unlockBlaster = false;
+  bool unlockMagic = false;
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
@@ -27,6 +28,7 @@ class GameData extends ChangeNotifier {
     levelDash = _prefs.getInt('levelDash') ?? 0;
     levelShield = _prefs.getInt('levelShield') ?? 0;
     unlockBlaster = _prefs.getBool('unlockBlaster') ?? false;
+    unlockMagic = _prefs.getBool('unlockMagic') ?? false;
     notifyListeners();
   }
 
@@ -36,6 +38,7 @@ class GameData extends ChangeNotifier {
     await _prefs.setInt('levelDash', levelDash);
     await _prefs.setInt('levelShield', levelShield);
     await _prefs.setBool('unlockBlaster', unlockBlaster);
+    await _prefs.setBool('unlockMagic', unlockMagic);
     notifyListeners();
   }
 
@@ -73,6 +76,7 @@ class GameData extends ChangeNotifier {
   int get dashUpgradeCost => 150 * (levelDash + 1);
   int get shieldUpgradeCost => 200 * (levelShield + 1);
   static const int blasterCost = 500;
+  static const int magicCost = 300;
 
   bool buyHpUpgrade() {
     if (totalGems >= hpUpgradeCost) {
@@ -114,6 +118,16 @@ class GameData extends ChangeNotifier {
     return false;
   }
 
+  bool buyMagic() {
+    if (!unlockMagic && totalGems >= magicCost) {
+      totalGems -= magicCost;
+      unlockMagic = true;
+      save();
+      return true;
+    }
+    return false;
+  }
+
   void addGems(int amount) {
     totalGems += amount;
     save();
@@ -125,6 +139,7 @@ class GameData extends ChangeNotifier {
     levelDash = 0;
     levelShield = 0;
     unlockBlaster = false;
+    unlockMagic = false;
     await save();
   }
 }

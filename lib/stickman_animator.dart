@@ -100,13 +100,13 @@ class StickmanAnimator {
       // Don't interrupt if the same animation is already playing
       if (controller.activeClip?.name == animationName && controller.isPlaying) return;
       
-      // Don't interrupt tap attack animations (Hook/Hook Punch) if they're still playing
+      // Don't interrupt tap attack animations (Hook/Hook Punch) if they're still actively playing
       String? currentClip = controller.activeClip?.name;
       if ((currentClip == "Hook" || currentClip == "Hook Punch") && controller.isPlaying) {
-        // Only allow interruption if the new animation is higher priority (dash, slash, shooting, idle)
+        // Only allow interruption if the new animation is higher priority (dash, slash, shooting, idle, running)
         if (animationName != "Round Kick" && animationName != "Roundhouse Kick" && 
             animationName != "magic" && animationName != "Shooting Arrow" &&
-            animationName != "idle") {
+            animationName != "idle" && animationName != "running") {
           return; // Don't interrupt tap attack with movement
         }
       }
