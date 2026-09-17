@@ -1,6 +1,52 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// A permanent, repeatable Workshop upgrade bought with gems.
+enum Upgrade {
+  hp('levelHp', 'Hull Strength', '+20 Max HP', 100),
+  dash('levelDash', 'Thrusters', '-10% Dash Cooldown', 150, maxLevel: 8),
+  shield('levelShield', 'Orbital Shield', 'Adds an orbiting shield', 200,
+      maxLevel: 4),
+  damage('levelDamage', 'Power Core', '+8% Damage', 120),
+  magnet('levelMagnet', 'Gem Magnet', '+25 Pickup Radius', 80, maxLevel: 6),
+  greed('levelGreed', 'Prospector', '+10% Gems Earned', 130, maxLevel: 10),
+  dashCharge('levelDashCharge', 'Capacitor', '+1 Dash Charge', 300,
+      maxLevel: 2);
+
+  const Upgrade(
+    this.key,
+    this.title,
+    this.description,
+    this.baseCost, {
+    this.maxLevel = 10,
+  });
+
+  /// SharedPreferences key. These are persisted, so they must not change.
+  final String key;
+  final String title;
+  final String description;
+  final int baseCost;
+  final int maxLevel;
+}
+
+/// A one-off Workshop purchase that unlocks an ability.
+enum Unlock {
+  blaster('unlockBlaster', 'Blaster Cannon',
+      'Hold the right stick to aim and fire', 500),
+  magic('unlockMagic', 'Magic Attack', 'Tap the magic button for area damage',
+      300),
+  revive('unlockRevive', 'Second Wind', 'Revive once per run at half health',
+      800);
+
+  const Unlock(this.key, this.title, this.description, this.cost);
+
+  /// SharedPreferences key. These are persisted, so they must not change.
+  final String key;
+  final String title;
+  final String description;
+  final int cost;
+}
+
 class GameData extends ChangeNotifier {
   static final GameData _instance = GameData._internal();
   factory GameData() => _instance;
@@ -11,11 +57,8 @@ class GameData extends ChangeNotifier {
 
   // Persisted Stats
   int totalGems = 0;
-  int levelHp = 0; // +20 HP per level
-  int levelDash = 0; // -10% Cooldown per level
-  int levelShield = 0; // Unlocks/Upgrades Shield
-  bool unlockBlaster = false;
-  bool unlockMagic = false;
+  final Map<Upgrade, int> _levels = <Upgrade, int>{};
+  final Set<Unlock> _unlocks = <Unlock>{};
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
@@ -24,29 +67,101 @@ class GameData extends ChangeNotifier {
 
   void load() {
     totalGems = _prefs.getInt('totalGems') ?? 0;
-    levelHp = _prefs.getInt('levelHp') ?? 0;
-    levelDash = _prefs.getInt('levelDash') ?? 0;
-    levelShield = _prefs.getInt('levelShield') ?? 0;
-    unlockBlaster = _prefs.getBool('unlockBlaster') ?? false;
-    unlockMagic = _prefs.getBool('unlockMagic') ?? false;
+    for (final upgrade in Upgrade.values) {
+      _levels[upgrade] = _prefs.getInt(upgrade.key) ?? 0;
+    }
+    _unlocks.clear();
+    for (final unlock in Unlock.values) {
+      if (_prefs.getBool(unlock.key) ?? false) _unlocks.add(unlock);
+    }
     notifyListeners();
   }
 
   Future<void> save() async {
     await _prefs.setInt('totalGems', totalGems);
-    await _prefs.setInt('levelHp', levelHp);
-    await _prefs.setInt('levelDash', levelDash);
-    await _prefs.setInt('levelShield', levelShield);
-    await _prefs.setBool('unlockBlaster', unlockBlaster);
-    await _prefs.setBool('unlockMagic', unlockMagic);
+    for (final upgrade in Upgrade.values) {
+      await _prefs.setInt(upgrade.key, levelOf(upgrade));
+    }
+    for (final unlock in Unlock.values) {
+      await _prefs.setBool(unlock.key, has(unlock));
+    }
     notifyListeners();
   }
+
+  // --- Upgrades ---
+
+  int levelOf(Upgrade upgrade) => _levels[upgrade] ?? 0;
+
+  bool has(Unlock unlock) => _unlocks.contains(unlock);
+
+  bool isMaxed(Upgrade upgrade) => levelOf(upgrade) >= upgrade.maxLevel;
+
+  /// Cost of the next level; each level costs one more multiple of the base.
+  int costOf(Upgrade upgrade) => upgrade.baseCost * (levelOf(upgrade) + 1);
+
+  bool canAfford(int cost) => totalGems >= cost;
+
+  bool buyUpgrade(Upgrade upgrade) {
+    if (isMaxed(upgrade)) return false;
+    final int cost = costOf(upgrade);
+    if (!canAfford(cost)) return false;
+
+    totalGems -= cost;
+    _levels[upgrade] = levelOf(upgrade) + 1;
+    save();
+    return true;
+  }
+
+  bool buyUnlock(Unlock unlock) {
+    if (has(unlock) || !canAfford(unlock.cost)) return false;
+
+    totalGems -= unlock.cost;
+    _unlocks.add(unlock);
+    save();
+    return true;
+  }
+
+  // --- Derived gameplay values ---
+
+  int get maxHealth => 100 + (levelOf(Upgrade.hp) * 20);
+
+  double get dashCooldown => 0.8 * _pow(0.9, levelOf(Upgrade.dash));
+
+  int get shieldCount => levelOf(Upgrade.shield);
+
+  double get damageMultiplier => 1.0 + (0.08 * levelOf(Upgrade.damage));
+
+  double get pickupRadius => 100.0 + (25.0 * levelOf(Upgrade.magnet));
+
+  int get dashCharges => 1 + levelOf(Upgrade.dashCharge);
+
+  /// Gems actually banked for a run of [runGems] raw gems.
+  int gemsEarned(int runGems) =>
+      (runGems * (1.0 + 0.10 * levelOf(Upgrade.greed))).round();
+
+  static double _pow(double base, int exponent) {
+    double result = 1.0;
+    for (int i = 0; i < exponent; i++) {
+      result *= base;
+    }
+    return result;
+  }
+
+  // --- Legacy accessors (kept so existing call sites keep reading naturally) ---
+
+  int get levelHp => levelOf(Upgrade.hp);
+  int get levelDash => levelOf(Upgrade.dash);
+  int get levelShield => levelOf(Upgrade.shield);
+  bool get unlockBlaster => has(Unlock.blaster);
+  bool get unlockMagic => has(Unlock.magic);
+  bool get unlockRevive => has(Unlock.revive);
 
   // --- Session Persistence ---
 
   bool get hasSavedRun => _prefs.containsKey('savedWave');
 
-  Future<void> saveRunState(int wave, int level, int xp, double damageMult, int health) async {
+  Future<void> saveRunState(
+      int wave, int level, int xp, double damageMult, int health) async {
     await _prefs.setInt('savedWave', wave);
     await _prefs.setInt('savedLevel', level);
     await _prefs.setInt('savedXp', xp);
@@ -70,64 +185,6 @@ class GameData extends ChangeNotifier {
   double get savedDamageMult => _prefs.getDouble('savedDamageMult') ?? 1.0;
   int get savedHealth => _prefs.getInt('savedHealth') ?? 100;
 
-  // --- Upgrade Costs & Logic ---
-
-  int get hpUpgradeCost => 100 * (levelHp + 1);
-  int get dashUpgradeCost => 150 * (levelDash + 1);
-  int get shieldUpgradeCost => 200 * (levelShield + 1);
-  static const int blasterCost = 500;
-  static const int magicCost = 300;
-
-  bool buyHpUpgrade() {
-    if (totalGems >= hpUpgradeCost) {
-      totalGems -= hpUpgradeCost;
-      levelHp++;
-      save();
-      return true;
-    }
-    return false;
-  }
-
-  bool buyDashUpgrade() {
-    if (totalGems >= dashUpgradeCost) {
-      totalGems -= dashUpgradeCost;
-      levelDash++;
-      save();
-      return true;
-    }
-    return false;
-  }
-
-  bool buyShieldUpgrade() {
-    if (totalGems >= shieldUpgradeCost) {
-      totalGems -= shieldUpgradeCost;
-      levelShield++;
-      save();
-      return true;
-    }
-    return false;
-  }
-
-  bool buyBlaster() {
-    if (!unlockBlaster && totalGems >= blasterCost) {
-      totalGems -= blasterCost;
-      unlockBlaster = true;
-      save();
-      return true;
-    }
-    return false;
-  }
-
-  bool buyMagic() {
-    if (!unlockMagic && totalGems >= magicCost) {
-      totalGems -= magicCost;
-      unlockMagic = true;
-      save();
-      return true;
-    }
-    return false;
-  }
-
   void addGems(int amount) {
     totalGems += amount;
     save();
@@ -135,11 +192,8 @@ class GameData extends ChangeNotifier {
 
   Future<void> resetProgress() async {
     totalGems = 0;
-    levelHp = 0;
-    levelDash = 0;
-    levelShield = 0;
-    unlockBlaster = false;
-    unlockMagic = false;
+    _levels.clear();
+    _unlocks.clear();
     await save();
   }
 }

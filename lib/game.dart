@@ -5,6 +5,7 @@ import 'package:flame/events.dart';
 import 'package:flame/input.dart'; // Added to fix TapDetector not found
 import 'package:flutter/material.dart' hide Draggable;
 
+import 'balance.dart';
 import 'hud.dart';
 import 'managers.dart';
 import 'visual_effects.dart';
@@ -201,6 +202,14 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
   // Tweakable Variable for Dash Sensitivity
   static const double dashVelocityThreshold = 1000.0; // Lowered from 2500.0
 
+  /// Boons offered by the level-up currently on screen; empty when none.
+  List<Boon> pendingBoons = <Boon>[];
+  int _queuedLevelUps = 0;
+
+  /// Live enemies as of the last frame. Used to cap runaway summoning without
+  /// each summoner rescanning the world.
+  int liveEnemyCount = 0;
+
   // Camera Shake State
   double _shakeTimer = 0.0;
   double _shakeIntensity = 0.0;
@@ -363,8 +372,10 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     }
 
     final Random rng = _rng;
-    int enemyCount = 4 + (wave * 1.5).toInt();
-    bool isEliteWave = wave % 5 == 0;
+    final int enemyCount = Balance.enemyCount(wave);
+    final bool eliteWave = Balance.isEliteWave(wave);
+    final bool bossWave = Balance.isBossWave(wave);
+    int summoners = 0;
 
     for (int i = 0; i < enemyCount; i++) {
       Vector2 pos = player.position + Vector2(
@@ -373,20 +384,29 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
       );
 
       // 20% Shooter chance, or alternating in Elite waves
-      bool isShooter = rng.nextDouble() < 0.2 || (isEliteWave && i % 2 == 0);
+      bool isShooter = rng.nextDouble() < 0.2 || (eliteWave && i % 2 == 0);
 
       if (isShooter) {
-        world.add(ShooterEnemy()..position = pos);
+        world.add(ShooterEnemy(wave: wave)..position = pos);
       } else {
-        world.add(Enemy()..position = pos);
+        // Regular enemies now roll behavioural modifiers, which used to be
+        // reachable only on the elite every 5th wave.
+        final EnemyModifier modifier =
+            Balance.rollModifier(wave, rng, summonersSpawned: summoners);
+        if (modifier == EnemyModifier.summoner) summoners++;
+        world.add(Enemy(wave: wave, modifier: modifier)..position = pos);
       }
     }
 
-    if (isEliteWave) {
-      // Spawn Boss
-      // Randomly pick a modifier
-      final modifier = EnemyModifier.values[rng.nextInt(EnemyModifier.values.length)];
-      world.add(Enemy(isElite: true, modifier: modifier)..position = player.position + Vector2(600, 0));
+    if (bossWave) {
+      world.add(Boss(wave: wave)..position = player.position + Vector2(700, 0));
+      hud.showBossWarning();
+    } else if (eliteWave) {
+      world.add(Enemy(
+        isElite: true,
+        wave: wave,
+        modifier: Balance.rollEliteModifier(wave, rng),
+      )..position = player.position + Vector2(600, 0));
       hud.showBossWarning();
     }
   }
@@ -447,6 +467,8 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
       }
     }
 
+    liveEnemyCount = enemies.length;
+
     // Next wave once every enemy is dead (Base Enemy + ShooterEnemy)
     if (enemies.isEmpty) {
       _waveTimer += dt;
@@ -464,7 +486,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
         // Fast magnetic pull
         gem.position.add((player.position - gem.position).safeNormalized() * 800 * dt);
         collected = player.position.distanceTo(gem.position) < 20;
-      } else if (player.position.distanceTo(gem.position) < 100) {
+      } else if (player.position.distanceTo(gem.position) < player.pickupRadius) {
         // Normal magnetic pull
         gem.position.add((player.position - gem.position).safeNormalized() * 300 * dt);
         collected = player.position.distanceTo(gem.position) < 10;
@@ -503,21 +525,22 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
       final Vector2 awayFromPlayer = enemy.position - player.position;
 
       // Check DASH Hit
-      if (player.isDashing && dist < (combinedRadius + 10)) {
-        enemy.takeDamage((20 * player.damageMult).toInt(),
+      if (player.isDashing &&
+          dist < (combinedRadius + 10 + player.meleeRangeBonus)) {
+        enemy.takeDamage((20 * player.damageScale).toInt(),
             knockbackDir: awayFromPlayer);
       }
 
       // Check SLASH Hit (Magic)
-      if (player.isSlashing && dist < (combinedRadius + 60)) {
-        enemy.takeDamage((10 * player.damageMult).toInt(),
+      if (player.isSlashing &&
+          dist < (combinedRadius + 60 + player.meleeRangeBonus)) {
+        enemy.takeDamage((10 * player.damageScale).toInt(),
             knockbackDir: awayFromPlayer);
       }
 
       // Check PLAYER DAMAGE Hit (Enemy Melee)
       if (!player.isDashing && dist < combinedRadius) {
-        // Elite enemies deal more damage
-        player.takeDamage(enemy.isElite ? 20 : 10, fromEnemyMelee: true);
+        player.takeDamage(enemy.meleeDamage, fromEnemyMelee: true);
       }
     }
   }
@@ -724,6 +747,10 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     _shakeTimer = 0.0;
     _shootDirection = null;
     _shootAccumulator = 0.0;
+    pendingBoons = <Boon>[];
+    _queuedLevelUps = 0;
+    overlays.remove('LevelUp');
+    paused = false;
 
     player.resetForNewRun();
     player.position = Vector2.zero();
@@ -741,18 +768,50 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     overlays.remove('GameOver');
   }
 
+  /// Called on level up: pauses and offers a choice of boons. Levels gained
+  /// in the same frame queue up so each one still gets its pick.
+  void offerBoons() {
+    _queuedLevelUps++;
+    if (pendingBoons.isEmpty) _showBoonChoice();
+  }
+
+  void _showBoonChoice() {
+    pendingBoons = Balance.rollBoons(_rng);
+    paused = true;
+    overlays.add('LevelUp');
+  }
+
+  void chooseBoon(Boon boon) {
+    player.applyBoon(boon);
+    pendingBoons = <Boon>[];
+    _queuedLevelUps = _queuedLevelUps > 0 ? _queuedLevelUps - 1 : 0;
+    overlays.remove('LevelUp');
+
+    if (_queuedLevelUps > 0) {
+      _showBoonChoice();
+    } else {
+      paused = false;
+      hud.showStory("LEVEL UP!\n${boon.title}");
+    }
+  }
+
   void onGameOver() {
     // Guard against re-entry: components keep updating after death, so traps
     // and projectiles could otherwise re-trigger this and bank runGems again.
     if (gameOver) return;
     gameOver = true;
-    GameData().addGems(runGems);
+    // Never leave the level-up overlay up over a dead run.
+    pendingBoons = <Boon>[];
+    _queuedLevelUps = 0;
+    overlays.remove('LevelUp');
+    paused = false;
+    GameData().addGems(GameData().gemsEarned(runGems));
     GameData().clearRunState(); // Clear save on death
     overlays.add('GameOver');
   }
 
   void exitRun() {
-    GameData().addGems(runGems);
+    GameData().addGems(GameData().gemsEarned(runGems));
     // Save state for Resume
     if (!gameOver) {
       GameData().saveRunState(wave, player.level, player.xp, player.damageMult, player.health);
@@ -827,8 +886,35 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
   bool isDashing = false;
   double _dashTimer = 0.0;
   static const double _dashDuration = 0.32;
-  double _currentDashCooldown = 0.0;
-  double get currentDashCooldown => _currentDashCooldown;
+
+  /// Time until the next dash charge comes back.
+  double _dashRecharge = 0.0;
+  double get currentDashCooldown => _dashRecharge;
+  double get _effectiveDashCooldown =>
+      dashCooldownMax / (isFrenzyActive ? 2.0 : 1.0);
+
+  /// Dash charges, from the Capacitor upgrade.
+  late int maxDashCharges;
+  int _dashCharges = 1;
+  int get dashCharges => _dashCharges;
+
+  /// Permanent damage bonus from the Workshop. Kept separate from
+  /// [damageMult], which is the in-run multiplier that gets saved and
+  /// restored, so the two never overwrite each other.
+  double _workshopDamageMult = 1.0;
+
+  /// Total damage scale applied to every attack.
+  double get damageScale => damageMult * _workshopDamageMult;
+
+  // --- In-run boons (see Boon) ---
+  double moveSpeedMult = 1.0;
+  double pickupRadius = 100.0;
+  double meleeRangeBonus = 0.0;
+  double regenPerSecond = 0.0;
+  double _regenAccumulator = 0.0;
+
+  /// Second Wind is once per run.
+  bool _reviveUsed = false;
 
   Vector2 _dashDirection = Vector2.zero();
   double _trailTimer = 0.0;
@@ -869,9 +955,13 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
     super.onLoad();
     // ... Keep existing stat initialization ...
     final data = GameData();
-    maxHealth = 100 + (data.levelHp * 20);
+    maxHealth = data.maxHealth;
     health = (restoreHealth ?? maxHealth).clamp(1, maxHealth);
-    dashCooldownMax = 0.8 * pow(0.9, data.levelDash);
+    dashCooldownMax = data.dashCooldown;
+    _workshopDamageMult = data.damageMultiplier;
+    pickupRadius = data.pickupRadius;
+    maxDashCharges = data.dashCharges;
+    _dashCharges = maxDashCharges;
 
     // Initialize the animator with the loaded data from GameRef
     _animator = StickmanAnimator(
@@ -895,9 +985,29 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
 
     // ... Keep existing cooldown logic ...
     if (_damageCooldown > 0) _damageCooldown -= dt;
-    if (_currentDashCooldown > 0) _currentDashCooldown -= dt;
     if (_shootCooldown > 0) _shootCooldown -= dt;
     if (_frenzyTimer > 0) _frenzyTimer -= dt;
+
+    // Dash charges refill one at a time.
+    if (_dashCharges < maxDashCharges) {
+      _dashRecharge -= dt;
+      if (_dashRecharge <= 0) {
+        _dashCharges++;
+        _dashRecharge = _dashCharges < maxDashCharges ? _effectiveDashCooldown : 0.0;
+      }
+    } else {
+      _dashRecharge = 0.0;
+    }
+
+    // Nanobots boon.
+    if (regenPerSecond > 0 && health > 0 && health < maxHealth) {
+      _regenAccumulator += regenPerSecond * dt;
+      if (_regenAccumulator >= 1.0) {
+        final int heal = _regenAccumulator.floor();
+        _regenAccumulator -= heal;
+        health = (health + heal).clamp(0, maxHealth);
+      }
+    }
 
     Vector2 velocity = Vector2.zero();
 
@@ -906,7 +1016,7 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
       double progress = (1.0 - (_dashTimer / _dashDuration)).clamp(0.0, 1.0);
       double currentSpeedMult = _dashSpeedMult * (1.0 - Curves.easeOutCubic.transform(progress) * 0.7);
 
-      velocity = _dashDirection * (_baseSpeed * currentSpeedMult);
+      velocity = _dashDirection * (_baseSpeed * moveSpeedMult * currentSpeedMult);
       position.add(velocity * dt);
 
       // Accumulate: `_dashTimer % 0.05 < dt` spawned zero or several trails
@@ -925,7 +1035,7 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
         // Do not reset angle, Animator handles rotation now
       }
     } else if (moveDirection != null && moveDirection != Vector2.zero()) {
-      velocity = moveDirection! * _baseSpeed;
+      velocity = moveDirection! * (_baseSpeed * moveSpeedMult);
       position.add(velocity * dt);
       
       // NEW: Update facing direction when moving
@@ -983,15 +1093,20 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
 
   // ... Keep existing methods (dash, slash, shoot, gainXp, etc) ...
   void dash(Vector2 direction) {
-    if (isDashing || _currentDashCooldown > 0) return;
+    if (isDashing || _dashCharges <= 0) return;
+
+    final bool wasFull = _dashCharges == maxDashCharges;
+    _dashCharges--;
+    // Only start the timer when leaving a full bar, so spending a second
+    // charge does not restart the recharge already in progress.
+    if (wasFull) _dashRecharge = _effectiveDashCooldown;
+
     isDashing = true;
     isSlashing = false; // Reset slash if dashing
     _dashTimer = _dashDuration;
     _trailTimer = 0.0;
     _dashClipName = _useRoundKick ? "Round Kick" : "Roundhouse Kick";
     _useRoundKick = !_useRoundKick;
-    // Frenzy halves cooldown
-    _currentDashCooldown = dashCooldownMax / (isFrenzyActive ? 2.0 : 1.0);
 
     if (direction.length > 0) {
       _dashDirection = direction.safeNormalized();
@@ -1035,9 +1150,9 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
     // Face shooting direction
     if (dir != Vector2.zero()) _facingDirection = dir.normalized();
 
-    int sfxType = damageMult > 1.5 ? 1 : 0;
+    int sfxType = damageScale > 1.5 ? 1 : 0;
     SoundService.instance.playShoot(variant: sfxType);
-    game.world.add(PlayerProjectile(position, dir, damageMult));
+    game.world.add(PlayerProjectile(position, dir, damageScale));
   }
 
   void tapAttack() {
@@ -1062,7 +1177,7 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
         final double combinedRadius = (size.x / 2) + (child.size.x / 2);
         
         // Range check (Punch range ~40)
-        if (dist < (combinedRadius + 40)) {
+        if (dist < (combinedRadius + 40 + meleeRangeBonus)) {
           // Direction Check: Dot Product
           // 1.0 = Directly in front, 0.0 = Side, -1.0 = Behind
           // > 0.3 is roughly a 140-degree cone in front
@@ -1070,7 +1185,7 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
           double dot = _facingDirection.dot(dirToEnemy);
           
           if (dot > 0.3) { // 0.3 is a generous frontal cone (~140 degrees)
-             child.takeDamage((15 * damageMult).toInt(),
+             child.takeDamage((15 * damageScale).toInt(),
                  knockbackDir: toEnemy, invulnerability: 0.05);
           }
         }
@@ -1106,6 +1221,19 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
 
   /// Resets per-run state so a restart does not inherit the previous run.
   void resetForNewRun() {
+    final data = GameData();
+    maxHealth = data.maxHealth;
+    dashCooldownMax = data.dashCooldown;
+    pickupRadius = data.pickupRadius;
+    maxDashCharges = data.dashCharges;
+    _dashCharges = maxDashCharges;
+    _dashRecharge = 0.0;
+    moveSpeedMult = 1.0;
+    meleeRangeBonus = 0.0;
+    regenPerSecond = 0.0;
+    _regenAccumulator = 0.0;
+    _reviveUsed = false;
+
     health = maxHealth;
     level = 1;
     xp = 0;
@@ -1115,7 +1243,6 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
     isSlashing = false;
     _isTapAttacking = false;
     _dashTimer = 0.0;
-    _currentDashCooldown = 0.0;
     _damageCooldown = 0.0;
     _frenzyTimer = 0.0;
     moveDirection = null;
@@ -1125,18 +1252,42 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
 
   void gainXp(int amount) {
     xp += amount;
-    if (xp >= xpToNextLevel) _levelUp();
+    // A big gem can cross several thresholds at once; each one owes a boon.
+    while (xp >= xpToNextLevel) {
+      _levelUp();
+    }
   }
 
   void _levelUp() {
     xp -= xpToNextLevel;
     level++;
     xpToNextLevel = (xpToNextLevel * 1.5).toInt();
-    damageMult += 0.1;
     health = maxHealth;
-    game.hud.showStory("LEVEL UP!");
     SoundService.instance.playLevelUp();
     game.world.add(VisualEffects.createExplosion(position));
+    // The flat +0.1 damage is replaced by a chosen boon.
+    game.offerBoons();
+  }
+
+  /// Applies an in-run level-up boon.
+  void applyBoon(Boon boon) {
+    switch (boon) {
+      case Boon.damage:
+        damageMult += 0.15;
+      case Boon.maxHealth:
+        maxHealth += 25;
+        health = maxHealth;
+      case Boon.moveSpeed:
+        moveSpeedMult += 0.10;
+      case Boon.dashCooldown:
+        dashCooldownMax *= 0.85;
+      case Boon.pickupRadius:
+        pickupRadius += 40;
+      case Boon.meleeReach:
+        meleeRangeBonus += 20;
+      case Boon.regen:
+        regenPerSecond += 1.0;
+    }
   }
 
   void takeDamage(int amount, {bool fromEnemyMelee = false}) {
@@ -1161,6 +1312,17 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
     game.world.add(DamageText(amount, position, isCrit: true));
     if (health <= 0) {
       health = 0;
+      if (!_reviveUsed && GameData().unlockRevive) {
+        // Second Wind: one revive per run.
+        _reviveUsed = true;
+        health = (maxHealth * 0.5).round();
+        _damageCooldown = 2.0;
+        game.hud.showStory("SECOND WIND");
+        game.cameraShake(5.0);
+        game.world.add(VisualEffects.createExplosion(position, scale: 4.0));
+        SoundService.instance.playLevelUp();
+        return;
+      }
       game.onGameOver();
     }
   }
@@ -1211,6 +1373,10 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
   // ... Stats ...
   int health = 2;
   static const double _speed = 100.0;
+
+  /// Wave this enemy was spawned on; drives its health and damage.
+  final int wave;
+  final bool isBoss;
   Vector2? _roamTarget;
   double _roamTimer = 0.0;
   Vector2 _knockbackVelocity = Vector2.zero();
@@ -1233,13 +1399,24 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
   static final Paint _shadowPaint = Paint()..color = Colors.black.withValues(alpha: 0.3);
   static final Paint _flashPaint = Paint()..color = const Color(0x88FFFFFF);
 
-  Enemy({this.isElite = false, this.modifier = EnemyModifier.none})
-      : super(size: Vector2.all(isElite ? 100 : 50), anchor: Anchor.center) {
-     if(isElite) {
-       health = health * 50; // Increased from 30 to 50 (60 -> 100 HP)
-     }
-     _maxHealth = health;
+  Enemy({
+    this.isElite = false,
+    this.isBoss = false,
+    this.modifier = EnemyModifier.none,
+    this.wave = 1,
+  }) : super(
+          size: Vector2.all(isBoss ? 140 : (isElite ? 100 : 50)),
+          anchor: Anchor.center,
+        ) {
+    health = Balance.enemyHealth(wave, isElite: isElite, isBoss: isBoss);
+    _maxHealth = health;
   }
+
+  int get maxHealth => _maxHealth;
+
+  /// Contact damage, scaled by the wave this enemy spawned on.
+  int get meleeDamage =>
+      Balance.enemyMeleeDamage(wave, isElite: isElite, isBoss: isBoss);
 
   @override
   Future<void> onLoad() async {
@@ -1250,7 +1427,10 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
     Color c = Colors.redAccent;
     double s = 1.0;
 
-    if (isElite) {
+    if (isBoss) {
+      c = const Color(0xFFFF2D55);
+      s = 3.0;
+    } else if (isElite) {
       c = Colors.deepPurpleAccent;
       s = 2.0;
     } else if (modifier == EnemyModifier.swift) {
@@ -1277,8 +1457,10 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
     _animator.play("idle");
   }
 
-  @override
-  void update(double dt) {
+  /// Per-frame bookkeeping every enemy type needs: component update, damage
+  /// immunity, kamikaze pulse and regen. Subclasses that replace [update] call
+  /// this instead of `super.update(dt)`.
+  void updateShared(double dt) {
     super.update(dt);
     if (_invulnerableTimer > 0) _invulnerableTimer -= dt;
     if (modifier == EnemyModifier.kamikaze) _pulseTimer += dt;
@@ -1291,6 +1473,30 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
             health++;
         }
     }
+  }
+
+  /// Chooses the attack / run / idle clip and advances the animator.
+  void updateAnimation(double dt, Vector2 velocity, {double? attackRange}) {
+    // Elite enemies have larger attack range
+    final double range = attackRange ?? (isElite ? size.x + 30 : size.x + 10);
+    final double distToPlayer = position.distanceTo(game.player.position);
+
+    // Attack Logic (Melee) - Skip for Kamikaze (they explode instead)
+    if (modifier != EnemyModifier.kamikaze && distToPlayer < range) {
+      _animator.isAttacking = true;
+      _animator.play("Kicking"); // Use kicking animation
+    } else {
+      _animator.isAttacking = false;
+      // Play animations based on movement
+      _animator.play(velocity.length > 10 ? "running" : "idle");
+    }
+
+    _animator.update(dt, velocity, false);
+  }
+
+  @override
+  void update(double dt) {
+    updateShared(dt);
 
     Vector2 velocity = Vector2.zero();
     double distToPlayer = position.distanceTo(game.player.position);
@@ -1305,7 +1511,7 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
         
         // Explode on contact (enemy melee attack)
         if (distToPlayer < (size.x / 2 + game.player.size.x / 2)) {
-          game.player.takeDamage(30, fromEnemyMelee: true);
+          game.player.takeDamage(meleeDamage + 20, fromEnemyMelee: true);
           takeDamage(9999); // Kill self
           game.world.add(VisualEffects.createExplosion(position, scale: 2.0));
           return; // Exit early since we're dead
@@ -1316,13 +1522,16 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
       _summonTimer += dt;
       if (_summonTimer >= _summonInterval) {
         _summonTimer = 0.0;
-        // Spawn a basic enemy nearby
-        final Random rng = _rng;
-        Vector2 spawnPos = position + Vector2(
-          (rng.nextDouble() - 0.5) * 100,
-          (rng.nextDouble() - 0.5) * 100,
-        );
-        game.world.add(Enemy()..position = spawnPos);
+        // Cap the population: without this, summoners snowball into a wave
+        // that can never be cleared.
+        if (game.liveEnemyCount < Balance.maxLiveEnemies) {
+          final Random rng = _rng;
+          Vector2 spawnPos = position + Vector2(
+            (rng.nextDouble() - 0.5) * 100,
+            (rng.nextDouble() - 0.5) * 100,
+          );
+          game.world.add(Enemy(wave: wave)..position = spawnPos);
+        }
       }
       
       // Flee if too close
@@ -1380,24 +1589,7 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
       }
     }
 
-    // Attack Logic (Melee) - Skip for Kamikaze (they explode instead)
-    // Elite enemies have larger attack range
-    double attackRange = isElite ? size.x + 30 : size.x + 10;
-    if (modifier != EnemyModifier.kamikaze && distToPlayer < attackRange) {
-       _animator.isAttacking = true;
-       _animator.play("Kicking"); // Use kicking animation
-    } else {
-       _animator.isAttacking = false;
-       // Play animations based on movement
-       if (velocity.length > 10) {
-       _animator.play("running"); // Mapped to "Standard Run" intent but file uses "running"
-       } else {
-          _animator.play("idle");
-       }
-    }
-
-    // Update Animator with velocity
-    _animator.update(dt, velocity, false);
+    updateAnimation(dt, velocity);
   }
 
   // ... keep _pickNewTarget and takeDamage ...
@@ -1435,7 +1627,9 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
     health -= amount;
     // Elite enemies take less knockback and are harder to push away
     if (knockbackDir != null) {
-      double knockbackForce = isElite ? 200.0 : 400.0; // Elite takes 50% less knockback
+      // Bigger enemies are harder to shove; a boss should not be kited
+      // around the arena by knockback alone.
+      double knockbackForce = isBoss ? 80.0 : (isElite ? 200.0 : 400.0);
       _knockbackVelocity = knockbackDir.safeNormalized() * knockbackForce;
     }
     _invulnerableTimer = invulnerability;
@@ -1444,11 +1638,12 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
       removeFromParent();
       game.killCount++;
       // ... drops ...
-      game.world.add(XpGem(isElite ? 50 : 10)..position = position);
-      
-      // Spawn power-up with 3% chance
+      game.world.add(
+          XpGem(isBoss ? 200 : (isElite ? 50 : 10))..position = position);
+
+      // Bosses always drop a power-up; everything else has a 3% chance.
       final Random rng = _rng;
-      if (rng.nextDouble() < 0.03) {
+      if (isBoss || rng.nextDouble() < 0.03) {
         final powerUpType = PowerUpType.values[rng.nextInt(PowerUpType.values.length)];
         game.world.add(PowerUp(powerUpType)..position = position + Vector2((rng.nextDouble() - 0.5) * 20, (rng.nextDouble() - 0.5) * 20));
       }
@@ -1531,6 +1726,111 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
     if (_invulnerableTimer > 0) {
        canvas.drawCircle((size/2).toOffset(), size.x/2, _flashPaint);
     }
+  }
+}
+
+/// A multi-phase boss, spawned every 10th wave in place of the elite.
+///
+/// Phase 0 chases and melees, phase 1 adds radial projectile volleys, phase 2
+/// is enraged: faster, denser volleys and it summons adds.
+class Boss extends Enemy {
+  Boss({required super.wave}) : super(isBoss: true);
+
+  double _volleyTimer = 0.0;
+  double _addTimer = 6.0;
+  int _phase = -1;
+
+  int get phase => _phase < 0 ? 0 : _phase;
+
+  @override
+  void update(double dt) {
+    updateShared(dt);
+
+    final int newPhase = Balance.bossPhase(health / maxHealth);
+    if (newPhase != _phase) {
+      final bool isEscalation = _phase >= 0;
+      _phase = newPhase;
+      if (isEscalation) {
+        game.cameraShake(4.0);
+        game.world.add(VisualEffects.createExplosion(position, scale: 3.0));
+        game.hud.showStory(
+            newPhase == 2 ? "THE GIANT IS ENRAGED" : "THE GIANT BREAKS FORM");
+        // Clear incoming knockback so a phase change never shoves it away.
+        _knockbackVelocity.setZero();
+      }
+    }
+
+    Vector2 velocity = Vector2.zero();
+
+    if (_knockbackVelocity.length > 5) {
+      velocity = _knockbackVelocity;
+      position.add(velocity * dt);
+      _knockbackVelocity.scale(0.9);
+    } else {
+      _knockbackVelocity.setZero();
+      final double speedMult = switch (_phase) {
+        2 => 1.6,
+        1 => 1.1,
+        _ => 0.9,
+      };
+      final Vector2 toPlayer = game.player.position - position;
+      if (toPlayer.length > 5) {
+        velocity = toPlayer.safeNormalized() * (Enemy._speed * speedMult);
+        position.add(velocity * dt);
+      }
+    }
+
+    if (_phase >= 1) {
+      _volleyTimer -= dt;
+      if (_volleyTimer <= 0) {
+        _volleyTimer = _phase == 2 ? 2.0 : 3.0;
+        _fireVolley(_phase == 2 ? 12 : 8);
+      }
+    }
+
+    if (_phase == 2) {
+      _addTimer -= dt;
+      if (_addTimer <= 0) {
+        _addTimer = 6.0;
+        _summonAdds();
+      }
+    }
+
+    updateAnimation(dt, velocity, attackRange: size.x + 40);
+  }
+
+  void _fireVolley(int count) {
+    SoundService.instance.playExplosion();
+    game.cameraShake(2.0);
+    for (int i = 0; i < count; i++) {
+      final double angle = (2 * pi / count) * i;
+      final Vector2 dir = Vector2(cos(angle), sin(angle));
+      game.world.add(EnemyProjectile(position.clone(), position + dir * 100));
+    }
+  }
+
+  void _summonAdds() {
+    if (game.liveEnemyCount >= Balance.maxLiveEnemies) return;
+    for (int i = 0; i < 2; i++) {
+      final Vector2 offset = Vector2(
+        (_rng.nextDouble() - 0.5) * 160,
+        (_rng.nextDouble() - 0.5) * 160,
+      );
+      game.world.add(Enemy(wave: wave)..position = position + offset);
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    // Aura that tightens as the boss escalates.
+    final Paint aura = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..color = (_phase == 2 ? Colors.redAccent : Colors.deepOrangeAccent)
+          .withValues(alpha: 0.5);
+    canvas.drawCircle((size / 2).toOffset(), size.x / 2 - (_phase * 8), aura);
+
+    super.render(canvas);
   }
 }
 
@@ -1802,7 +2102,7 @@ class ShooterEnemy extends Enemy {
   bool _hasFired = false;
   String? _lastActiveClipName; // Track previous animation to detect completion
 
-  ShooterEnemy() : super();
+  ShooterEnemy({super.wave});
 
   @override
   Future<void> onLoad() async {
@@ -1821,10 +2121,7 @@ class ShooterEnemy extends Enemy {
 
   @override
   void update(double dt) {
-    // Custom movement logic first
-    if (_invulnerableTimer > 0) {
-      _invulnerableTimer -= dt;
-    }
+    updateShared(dt);
 
     Vector2 velocity = Vector2.zero();
 
@@ -1927,8 +2224,6 @@ class ShooterEnemy extends Enemy {
     }
   }
 }
-
-enum EnemyModifier { none, swift, ghostly, regen, kamikaze, shieldBearer, summoner }
 
 enum PowerUpType { health, frenzy, magnet, nuke }
 
@@ -2188,8 +2483,8 @@ class DashCooldownBar extends PositionComponent with HasVisibility {
   @override
   void update(double dt) {
     super.update(dt);
-    // Only show when cooldown is active (charging)
-    isVisible = player.currentDashCooldown > 0;
+    // Show while any charge is missing.
+    isVisible = player.dashCharges < player.maxDashCharges;
   }
 
   @override
@@ -2213,6 +2508,14 @@ class DashCooldownBar extends PositionComponent with HasVisibility {
 
      if (progress > 0) {
         canvas.drawRect(Rect.fromLTWH(0, 0, size.x * progress, size.y), _barPaint);
+     }
+
+     // Pips for charges still in hand (Capacitor upgrade).
+     if (player.maxDashCharges > 1) {
+       final Paint pip = Paint()..color = Colors.cyanAccent;
+       for (int i = 0; i < player.dashCharges; i++) {
+         canvas.drawCircle(Offset(3 + (i * 7), size.y + 5), 2, pip);
+       }
      }
   }
 }

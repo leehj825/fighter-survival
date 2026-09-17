@@ -10,6 +10,23 @@ A single-finger Action RPG prototype built with [Flutter](https://flutter.dev) a
     *   **Slash**: Circular motion to attack (Spinning Sword).
 *   **Visuals**: Neon geometric shapes using `CustomPainter` / Flame `PositionComponent`.
 
+### Progression
+
+*   **Level-up boons**: every level pauses the run and offers three of seven
+    upgrades (damage, max HP, move speed, dash cooldown, pickup radius, melee
+    reach, regen). Boons last for the run only.
+*   **Workshop**: permanent upgrades bought with gems — Hull Strength,
+    Thrusters, Orbital Shield, Power Core, Gem Magnet, Prospector and
+    Capacitor — plus the Blaster Cannon, Magic Attack and Second Wind
+    (one revive per run) unlocks.
+*   **Waves**: enemy health and contact damage scale with the wave. An elite
+    spawns every 5th wave; every 10th wave a multi-phase boss replaces it,
+    gaining radial projectile volleys at two thirds health and summoning adds
+    below one third.
+*   **Enemy modifiers**: swift, regen, shieldBearer, ghostly, kamikaze and
+    summoner are introduced one wave at a time from wave 3 and roll on regular
+    enemies, not just elites.
+
 ## Getting Started
 
 ### 1. Add Platform Support
@@ -68,6 +85,14 @@ flutter build macos
 ## Configuration
 
 *   **Dash Sensitivity**: Adjust `dashVelocityThreshold` in `lib/game.dart` (default: 1000.0).
+*   **Difficulty and progression tuning**: `lib/balance.dart` holds the wave
+    pacing, enemy scaling, modifier unlock waves, boss phase thresholds and the
+    boon pool, all as pure functions covered by `test/balance_test.dart`.
+*   **Workshop economy**: costs and effects are defined by the `Upgrade` and
+    `Unlock` enums in `lib/managers.dart`. Their `key` values are persisted, so
+    they must not be renamed.
+*   **Audio**: the game mixes with other apps rather than interrupting them.
+    See `SoundService.buildMixingAudioContext` before changing anything there.
 
 ## Development
 

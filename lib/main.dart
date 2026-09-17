@@ -2,6 +2,7 @@ import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'balance.dart';
 import 'game.dart';
 import 'managers.dart';
 import 'sound_service.dart';
@@ -288,6 +289,9 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
               child: GameWidget(
                 game: _game,
                 overlayBuilderMap: {
+                  'LevelUp': (context, RpgGame game) {
+                    return _LevelUpOverlay(game: game);
+                  },
                   'GameOver': (context, RpgGame game) {
                     return Center(
                       child: Container(
@@ -467,78 +471,27 @@ class _WorkshopDialogState extends State<WorkshopDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-               const Text("WORKSHOP", style: TextStyle(fontSize: 30, color: Colors.white)),
-               const SizedBox(height: 20),
-             Text("Gems: ${data.totalGems}", style: const TextStyle(fontSize: 24, color: Colors.amber)),
-             const SizedBox(height: 30),
+              const Text("WORKSHOP",
+                  style: TextStyle(fontSize: 30, color: Colors.white)),
+              const SizedBox(height: 20),
+              Text("Gems: ${data.totalGems}",
+                  style: const TextStyle(fontSize: 24, color: Colors.amber)),
+              const SizedBox(height: 30),
 
-             // HP Upgrade
-             _buildUpgradeRow(
-               "Hull Strength (Lvl ${data.levelHp})",
-               "+20 Max HP",
-               data.hpUpgradeCost,
-               () {
-                 setState(() {
-                   data.buyHpUpgrade();
-                 });
-               }
-             ),
+              // Repeatable upgrades
+              for (final upgrade in Upgrade.values) _buildUpgradeRow(upgrade),
 
-             // Dash Upgrade
-             _buildUpgradeRow(
-               "Thrusters (Lvl ${data.levelDash})",
-               "-10% Dash Cooldown",
-               data.dashUpgradeCost,
-               () {
-                 setState(() {
-                   data.buyDashUpgrade();
-                 });
-               }
-             ),
+              const SizedBox(height: 8),
 
-             // Shield Upgrade
-             _buildUpgradeRow(
-               "Orbital Shield (Lvl ${data.levelShield})",
-               data.levelShield == 0 ? "Unlocks Shield" : "Upgrades Shield",
-               data.shieldUpgradeCost,
-               () {
-                 setState(() {
-                   data.buyShieldUpgrade();
-                 });
-               }
-             ),
+              // One-off unlocks
+              for (final unlock in Unlock.values) _buildUnlockRow(unlock),
 
-             // Blaster Unlock
-             _buildUnlockRow(
-               "Blaster Cannon",
-               "Hold Right Stick to Aim, Release to Shoot",
-               GameData.blasterCost,
-               data.unlockBlaster,
-               () {
-                 setState(() {
-                   data.buyBlaster();
-                 });
-               }
-             ),
-
-             // Magic Unlock
-             _buildUnlockRow(
-               "Magic Attack",
-               "Tap Magic Button for Area Damage",
-               GameData.magicCost,
-               data.unlockMagic,
-               () {
-                 setState(() {
-                   data.buyMagic();
-                 });
-               }
-             ),
-
-             const SizedBox(height: 20),
-             TextButton(
-               onPressed: () => Navigator.of(context).pop(),
-               child: const Text("BACK", style: TextStyle(color: Colors.white, fontSize: 18)),
-             ),
+              const SizedBox(height: 20),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text("BACK",
+                    style: TextStyle(color: Colors.white, fontSize: 18)),
+              ),
             ],
           ),
         ),
@@ -546,12 +499,17 @@ class _WorkshopDialogState extends State<WorkshopDialog> {
     );
   }
 
-  Widget _buildUpgradeRow(String title, String desc, int cost, VoidCallback onTap) {
-    bool canAfford = data.totalGems >= cost;
+  Widget _buildRow({
+    required String title,
+    required String description,
+    required Color titleColor,
+    required Widget trailing,
+  }) {
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
+      decoration: BoxDecoration(
+          color: Colors.white10, borderRadius: BorderRadius.circular(8)),
       child: Wrap(
         alignment: WrapAlignment.spaceBetween,
         crossAxisAlignment: WrapCrossAlignment.center,
@@ -561,47 +519,142 @@ class _WorkshopDialogState extends State<WorkshopDialog> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
-              Text(desc, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+              Text(title,
+                  style: TextStyle(
+                      color: titleColor, fontWeight: FontWeight.bold)),
+              Text(description,
+                  style: const TextStyle(color: Colors.white70, fontSize: 12)),
             ],
           ),
-          ElevatedButton(
-            onPressed: canAfford ? onTap : null,
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade700),
-            child: Text("$cost G"),
-          )
+          trailing,
         ],
       ),
     );
   }
 
-  Widget _buildUnlockRow(String title, String desc, int cost, bool unlocked, VoidCallback onTap) {
-    bool canAfford = data.totalGems >= cost;
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
-      child: Wrap(
-        alignment: WrapAlignment.spaceBetween,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 10,
-        runSpacing: 10,
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildUpgradeRow(Upgrade upgrade) {
+    final int level = data.levelOf(upgrade);
+    final bool maxed = data.isMaxed(upgrade);
+    final int cost = data.costOf(upgrade);
+
+    return _buildRow(
+      title: "${upgrade.title} (Lvl $level)",
+      description: upgrade.description,
+      titleColor: Colors.cyanAccent,
+      trailing: maxed
+          ? const Text("MAX",
+              style:
+                  TextStyle(color: Colors.green, fontWeight: FontWeight.bold))
+          : ElevatedButton(
+              onPressed: data.canAfford(cost)
+                  ? () => setState(() => data.buyUpgrade(upgrade))
+                  : null,
+              style:
+                  ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade700),
+              child: Text("$cost G"),
+            ),
+    );
+  }
+
+  Widget _buildUnlockRow(Unlock unlock) {
+    final bool owned = data.has(unlock);
+
+    return _buildRow(
+      title: unlock.title,
+      description: unlock.description,
+      titleColor: Colors.pinkAccent,
+      trailing: owned
+          ? const Text("INSTALLED",
+              style:
+                  TextStyle(color: Colors.green, fontWeight: FontWeight.bold))
+          : ElevatedButton(
+              onPressed: data.canAfford(unlock.cost)
+                  ? () => setState(() => data.buyUnlock(unlock))
+                  : null,
+              style:
+                  ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade700),
+              child: Text("${unlock.cost} G"),
+            ),
+    );
+  }
+}
+
+/// Shown (with the game paused) when the player levels up, to pick one of
+/// three randomly offered boons.
+class _LevelUpOverlay extends StatelessWidget {
+  const _LevelUpOverlay({required this.game});
+
+  final RpgGame game;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<Boon> boons = game.pendingBoons;
+
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.88),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.cyanAccent, width: 2),
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Text(title, style: const TextStyle(color: Colors.pinkAccent, fontWeight: FontWeight.bold)),
-              Text(desc, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+              Text(
+                "LEVEL ${game.player.level}",
+                style: const TextStyle(
+                  color: Colors.cyanAccent,
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                "CHOOSE AN UPGRADE",
+                style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              for (final boon in boons)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: SizedBox(
+                    width: 260,
+                    child: ElevatedButton(
+                      onPressed: () => game.chooseBoon(boon),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blueGrey.shade800,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
+                        alignment: Alignment.centerLeft,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            boon.title,
+                            style: const TextStyle(
+                              color: Colors.cyanAccent,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                          Text(
+                            boon.description,
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
-          unlocked
-          ? const Text("INSTALLED", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold))
-          : ElevatedButton(
-            onPressed: canAfford ? onTap : null,
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade700),
-            child: Text("$cost G"),
-          )
-        ],
+        ),
       ),
     );
   }
