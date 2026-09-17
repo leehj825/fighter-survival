@@ -17,9 +17,51 @@ class SoundService {
     _settingsLoadCompleter = Completer<void>();
   }
 
-  // Instantiate players after configuring global audio context so they inherit
-  // the configured mixing/audio-focus behavior. Using `late final` ensures
-  // they're created once during initialization.
+  /// Audio configuration that lets the game play *alongside* whatever the user
+  /// is already listening to (Spotify, YouTube, a podcast) instead of stopping
+  /// it.
+  ///
+  /// Android: `AndroidAudioFocus.none` makes the plugin skip the audio-focus
+  /// request entirely, so nothing else is asked to stop or duck. Any other
+  /// value (the plugin default is `gain`, i.e. "this app is now the sole source
+  /// of audio") stops other apps. `isSpeakerphoneOn` and `audioMode` must stay
+  /// at their defaults: the plugin writes them straight to the *global*
+  /// AudioManager, so they change routing for the whole device, not just us.
+  ///
+  /// iOS: the `ambient` category does not interrupt other apps' audio, and is
+  /// silenced by the Ring/Silent switch, which is what a game should do.
+  ///
+  /// Do NOT pass `AVAudioSessionOptions.mixWithOthers` here. audioplayers
+  /// asserts that the option is only used with `playback`, `playAndRecord` or
+  /// `multiRoute`, so combining it with `ambient` throws while the context is
+  /// being built -- on Android too, since asserts run there as well. That threw
+  /// before `setAudioContext()` was ever reached, so the plugin kept its
+  /// default `AUDIOFOCUS_GAIN` and stopped other apps' audio. `ambient` already
+  /// mixes on its own.
+  static AudioContext buildMixingAudioContext() => AudioContext(
+        android: const AudioContextAndroid(
+          isSpeakerphoneOn: false,
+          audioMode: AndroidAudioMode.normal,
+          stayAwake: false,
+          contentType: AndroidContentType.music,
+          usageType: AndroidUsageType.game,
+          audioFocus: AndroidAudioFocus.none,
+        ),
+        iOS: AudioContextIOS(category: AVAudioSessionCategory.ambient),
+      );
+
+  final AudioContext _audioContext = buildMixingAudioContext();
+
+  /// True once the mixing context has been handed to the plugin. When this is
+  /// false the plugin is on its defaults and will stop other apps' audio.
+  bool _audioContextApplied = false;
+  bool get audioContextApplied => _audioContextApplied;
+
+  bool _initialized = false;
+  bool get isInitialized => _initialized;
+
+  // Created after the global audio context is configured so it inherits the
+  // mixing / no-audio-focus behaviour.
   late final AudioPlayer _backgroundMusicPlayer;
 
   // SFX Pool
@@ -41,21 +83,60 @@ class SoundService {
 
   // New unified initialization sequence
   Future<void> init() async {
-    // 1. FIRST: Configure Audio Context and WAIT for it to finish
+    // 1. FIRST: Configure the global audio context and WAIT for it to finish.
     await _initAudioContext();
 
-    // 2. Initialize SFX Pool
+    // 2. Create the music player. Players inherit the global context at
+    //    creation time, so this has to happen after step 1.
+    _backgroundMusicPlayer = await _createPlayer();
+
+    // 3. Initialize SFX Pool
     await _initSfxPool();
 
-    // 3. THEN: Load settings and complete the completer
+    // 4. THEN: Load settings and complete the completer
     await _loadVolumeSettings();
+
+    _initialized = true;
+  }
+
+  /// Releases every player and cancels any fade in flight. The players were
+  /// previously never disposed.
+  Future<void> dispose() async {
+    _fadeGeneration++; // Abandon any in-flight fade
+    _currentMusicPath = null;
+    _wasPlayingBeforePause = false;
+
+    if (!_initialized) return;
+
+    for (final player in <AudioPlayer>[_backgroundMusicPlayer, ..._sfxPool]) {
+      try {
+        await player.dispose();
+      } catch (e) {
+        debugPrint('⚠️ Error disposing audio player: $e');
+      }
+    }
+    _sfxPool.clear();
+  }
+
+  /// Creates a player and pins the mixing context onto it. Setting it
+  /// per-player as well as globally means no player can be left on the
+  /// plugin's default `AUDIOFOCUS_GAIN`, whatever the creation order.
+  Future<AudioPlayer> _createPlayer({PlayerMode? mode}) async {
+    final player = AudioPlayer();
+    if (mode != null) {
+      await player.setPlayerMode(mode);
+    }
+    try {
+      await player.setAudioContext(_audioContext);
+    } catch (e) {
+      debugPrint('⚠️ Could not apply audio context to player: $e');
+    }
+    return player;
   }
 
   Future<void> _initSfxPool() async {
     for (int i = 0; i < 4; i++) {
-        final player = AudioPlayer();
-        await player.setPlayerMode(PlayerMode.lowLatency);
-        _sfxPool.add(player);
+      _sfxPool.add(await _createPlayer(mode: PlayerMode.lowLatency));
     }
   }
 
@@ -69,8 +150,7 @@ class SoundService {
 
     // 2. If all busy, expand pool if below limit
     if (_sfxPool.length < _maxSfxPlayers) {
-       final player = AudioPlayer();
-       await player.setPlayerMode(PlayerMode.lowLatency);
+       final player = await _createPlayer(mode: PlayerMode.lowLatency);
        _sfxPool.add(player);
        return player;
     }
@@ -80,37 +160,20 @@ class SoundService {
     return _sfxPool[_poolIndex];
   }
 
-  /// Initialize audio context to allow mixing with other sounds
+  /// Hands the mixing context to the plugin so the game does not interrupt
+  /// audio from other apps. See [buildMixingAudioContext].
   Future<void> _initAudioContext() async {
     try {
-      // Configure audio context to allow mixing with other apps (like YouTube)
-      // This prevents the game from stopping background music when sounds play
-      final audioContext = AudioContext(
-        android: const AudioContextAndroid(
-          isSpeakerphoneOn: true,
-          stayAwake: false,
-          contentType: AndroidContentType.sonification,
-          usageType: AndroidUsageType.game, // Reverted to 'game' for better compatibility
-          audioFocus: AndroidAudioFocus.none, // Key setting: Don't request focus to avoid stopping other apps
-        ),
-        iOS: AudioContextIOS(
-          category: AVAudioSessionCategory.ambient,
-          options: const {
-            AVAudioSessionOptions.mixWithOthers,
-          },
-        ),
-      );
-
-      await AudioPlayer.global.setAudioContext(audioContext);
-      // Instantiate players after the global context is set so they use
-      // the intended AudioContext (mixing with other apps / no focus).
-      _backgroundMusicPlayer = AudioPlayer();
-
-      debugPrint('✅ Audio context configured to mix with other apps and players created');
+      await AudioPlayer.global.setAudioContext(_audioContext);
+      _audioContextApplied = true;
+      debugPrint('✅ Audio context configured to mix with other apps');
     } catch (e) {
-      debugPrint('⚠️ Error configuring audio context: $e');
-      // Ensure players are created even if context setup fails
-      try { _backgroundMusicPlayer = AudioPlayer(); } catch(_) {}
+      // Deliberately loud: if this fails the plugin stays on its defaults and
+      // will stop whatever the user was already listening to.
+      _audioContextApplied = false;
+      debugPrint(
+          '⚠️ FAILED to configure the mixing audio context, other apps will be '
+          'interrupted: $e');
     }
   }
 
@@ -182,6 +245,10 @@ class SoundService {
 
   /// Play background music (looping)
   Future<void> playBackgroundMusic(String assetPath) async {
+    if (!_initialized) {
+      debugPrint('🔇 SoundService not initialised yet, skipping: $assetPath');
+      return;
+    }
     if (!_isMusicEnabled) {
       debugPrint('🔇 Music is disabled, skipping: $assetPath');
       return;
@@ -287,6 +354,7 @@ class SoundService {
 
   /// Stop background music
   Future<void> stopBackgroundMusic({bool forceStop = false}) async {
+    if (!_initialized) return;
     if (_isMusicOperationInProgress && !forceStop) return;
 
     try {
@@ -313,6 +381,7 @@ class SoundService {
 
   /// Pause music (app background)
   Future<void> pauseBackgroundMusic() async {
+    if (!_initialized) return;
     try {
       if (_currentMusicPath != null) {
         _wasPlayingBeforePause =
@@ -328,7 +397,12 @@ class SoundService {
 
   /// Resume music (app foreground)
   Future<void> resumeBackgroundMusic() async {
-    if (!_isMusicEnabled || !_wasPlayingBeforePause || _currentMusicPath == null) return;
+    if (!_initialized ||
+        !_isMusicEnabled ||
+        !_wasPlayingBeforePause ||
+        _currentMusicPath == null) {
+      return;
+    }
     try {
       await _backgroundMusicPlayer.resume();
     } catch (_) {
@@ -340,8 +414,8 @@ class SoundService {
   // --- Asset-based SFX (Pooled) ---
 
   Future<void> _playSound(String assetName, {double volumeMult = 1.0}) async {
+    if (!_initialized || !_isSoundEnabled) return;
     await _ensureSettingsLoaded();
-    if (!_isSoundEnabled) return;
 
     final curvedMultiplier = _applyVolumeCurve(_soundVolumeMultiplier);
     final volume = (curvedMultiplier * volumeMult).clamp(0.0, 1.0);
