@@ -24,6 +24,44 @@ void main() {
     });
   });
 
+  group('xp curve', () {
+    test('the first level takes several kills, not one', () {
+      // Regression: the curve started at 10 while a regular enemy drops 10 XP,
+      // so the very first kill levelled the player up.
+      const int gemValue = 10;
+      expect(Balance.xpForLevel(1), 40);
+      expect(Balance.xpForLevel(1) / gemValue, greaterThanOrEqualTo(4));
+    });
+
+    test('wave 1 no longer hands out several levels', () {
+      // Wave 1 is 5 enemies at 10 XP each.
+      const int waveOneXp = 5 * 10;
+      int levels = 0;
+      int xp = waveOneXp;
+      int level = 1;
+      while (xp >= Balance.xpForLevel(level)) {
+        xp -= Balance.xpForLevel(level);
+        level++;
+        levels++;
+      }
+      expect(levels, 1, reason: 'one level in wave 1, not three');
+    });
+
+    test('requirement grows with every level', () {
+      int previous = 0;
+      for (int level = 1; level <= 40; level++) {
+        final int need = Balance.xpForLevel(level);
+        expect(need, greaterThan(previous), reason: 'level $level');
+        previous = need;
+      }
+    });
+
+    test('is defined for degenerate levels', () {
+      expect(Balance.xpForLevel(0), 40);
+      expect(Balance.xpForLevel(-5), 40);
+    });
+  });
+
   group('enemy scaling', () {
     test('wave 1 keeps the original values', () {
       expect(Balance.enemyHealth(1), 2);

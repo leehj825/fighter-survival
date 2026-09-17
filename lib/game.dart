@@ -243,7 +243,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
       player.level = data.savedLevel;
       player.xp = data.savedXp;
       player.damageMult = data.savedDamageMult;
-      player.xpToNextLevel = (10 * pow(1.5, player.level - 1)).toInt(); // Recalculate xpToNext
+      player.xpToNextLevel = Balance.xpForLevel(player.level);
     }
 
     world.add(player);
@@ -879,7 +879,7 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
   double _damageCooldown = 0.0;
   int level = 1;
   int xp = 0;
-  int xpToNextLevel = 10;
+  int xpToNextLevel = Balance.xpForLevel(1);
   double damageMult = 1.0;
   late double dashCooldownMax;
 
@@ -1237,7 +1237,7 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
     health = maxHealth;
     level = 1;
     xp = 0;
-    xpToNextLevel = 10;
+    xpToNextLevel = Balance.xpForLevel(1);
     damageMult = 1.0;
     isDashing = false;
     isSlashing = false;
@@ -1261,7 +1261,7 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
   void _levelUp() {
     xp -= xpToNextLevel;
     level++;
-    xpToNextLevel = (xpToNextLevel * 1.5).toInt();
+    xpToNextLevel = Balance.xpForLevel(level);
     health = maxHealth;
     SoundService.instance.playLevelUp();
     game.world.add(VisualEffects.createExplosion(position));

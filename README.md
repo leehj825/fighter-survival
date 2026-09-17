@@ -14,7 +14,8 @@ A single-finger Action RPG prototype built with [Flutter](https://flutter.dev) a
 
 *   **Level-up boons**: every level pauses the run and offers three of seven
     upgrades (damage, max HP, move speed, dash cooldown, pickup radius, melee
-    reach, regen). Boons last for the run only.
+    reach, regen). Boons last for the run only. The XP curve is tuned for
+    roughly one level per wave, so the modal appears about once a wave.
 *   **Workshop**: permanent upgrades bought with gems — Hull Strength,
     Thrusters, Orbital Shield, Power Core, Gem Magnet, Prospector and
     Capacitor — plus the Blaster Cannon, Magic Attack and Second Wind
@@ -85,9 +86,11 @@ flutter build macos
 ## Configuration
 
 *   **Dash Sensitivity**: Adjust `dashVelocityThreshold` in `lib/game.dart` (default: 1000.0).
-*   **Difficulty and progression tuning**: `lib/balance.dart` holds the wave
-    pacing, enemy scaling, modifier unlock waves, boss phase thresholds and the
-    boon pool, all as pure functions covered by `test/balance_test.dart`.
+*   **Difficulty and progression tuning**: `lib/balance.dart` holds the XP
+    curve, wave pacing, enemy scaling, modifier unlock waves, boss phase
+    thresholds and the boon pool, all as pure functions covered by
+    `test/balance_test.dart`. A regular enemy drops 10 XP, so
+    `Balance.xpForLevel` is read in units of roughly ten per kill.
 *   **Workshop economy**: costs and effects are defined by the `Upgrade` and
     `Unlock` enums in `lib/managers.dart`. Their `key` values are persisted, so
     they must not be renamed.

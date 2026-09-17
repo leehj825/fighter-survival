@@ -37,6 +37,23 @@ class Balance {
 
   static int enemyCount(int wave) => 4 + (wave * 1.5).toInt();
 
+  // --- Levelling ---
+
+  /// XP required to advance from [level] to the next one.
+  ///
+  /// The old curve started at 10 and stepped by x1.5, while a regular enemy
+  /// drops 10 XP -- so the very first kill levelled the player up and wave 1
+  /// alone reached level 4. Now that every level opens a modal boon choice,
+  /// that was three interruptions in the opening seconds.
+  ///
+  /// This curve is quadratic: 40 XP (4 kills) for the first level so there is
+  /// still an early reward, then growth that settles to roughly one level per
+  /// wave. Level 10 lands around wave 12 rather than wave 5.
+  static int xpForLevel(int level) {
+    final int steps = level < 1 ? 0 : level - 1;
+    return 40 + (30 * steps) + (5 * steps * steps);
+  }
+
   // --- Enemy scaling ---
   //
   // Wave 1 keeps the original values (2 HP, 100 HP elite) so early waves feel
