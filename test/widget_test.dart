@@ -194,4 +194,64 @@ void main() {
       isNotEmpty,
     );
   });
+
+  /// Spawns an enemy into a booted game and waits for it to load.
+  Future<Enemy> spawn(WidgetTester tester, RpgGame game, Enemy enemy) async {
+    enemy.position = game.player.position + Vector2(100, 0);
+    await tester.runAsync(() async {
+      game.world.add(enemy);
+      await enemy.loaded;
+    });
+    return enemy;
+  }
+
+  group('shield bearer', () {
+    // Regression: the shield was tested against a facing recomputed towards
+    // the player every frame, so every player attack counted as frontal and
+    // was blocked. The enemy could not be killed at all.
+    testWidgets('can always be killed from the front', (tester) async {
+      final game = await bootGame(tester);
+      final enemy = await spawn(
+          tester, game, Enemy(modifier: EnemyModifier.shieldBearer));
+
+      expect(enemy.hasShield, isTrue);
+      final int startHealth = enemy.health;
+      final Vector2 frontal = enemy.position - game.player.position;
+
+      // The shield soaks a few hits...
+      for (int i = 0; i < Enemy.shieldMaxHp; i++) {
+        enemy.takeDamage(1, knockbackDir: frontal, invulnerability: 0.0);
+      }
+      expect(enemy.health, startHealth, reason: 'the shield absorbs these');
+
+      // ...then shatters, and it takes damage head-on from there.
+      expect(enemy.hasShield, isFalse, reason: 'the shield must break');
+      enemy.takeDamage(1, knockbackDir: frontal, invulnerability: 0.0);
+      expect(enemy.health, lessThan(startHealth));
+    });
+
+    testWidgets('takes damage when flanked, shield intact', (tester) async {
+      final game = await bootGame(tester);
+      final enemy = await spawn(
+          tester, game, Enemy(modifier: EnemyModifier.shieldBearer));
+
+      final int startHealth = enemy.health;
+      // It spawns facing the player, so an attack from the far side lands.
+      final Vector2 fromBehind = Vector2(-100, 0);
+      enemy.takeDamage(1, knockbackDir: fromBehind, invulnerability: 0.0);
+
+      expect(enemy.hasShield, isTrue, reason: 'no block, so no durability lost');
+      expect(enemy.health, lessThan(startHealth));
+    });
+
+    testWidgets('is not immune to a nuke, which passes no direction',
+        (tester) async {
+      final game = await bootGame(tester);
+      final enemy = await spawn(
+          tester, game, Enemy(modifier: EnemyModifier.shieldBearer));
+
+      enemy.takeDamage(9999);
+      expect(enemy.health, 0);
+    });
+  });
 }

@@ -26,7 +26,10 @@ A single-finger Action RPG prototype built with [Flutter](https://flutter.dev) a
     below one third.
 *   **Enemy modifiers**: swift, regen, shieldBearer, ghostly, kamikaze and
     summoner are introduced one wave at a time from wave 3 and roll on regular
-    enemies, not just elites.
+    enemies, not just elites. The blue shieldBearer blocks hits inside a
+    120-degree frontal arc that turns to follow you at a limited rate, so it
+    has to be flanked (dashing around it works) -- and the shield shatters
+    after three blocks, so it is always killable head-on too.
 
 ## Getting Started
 

@@ -12,17 +12,37 @@ import 'visual_effects.dart';
 import 'sound_service.dart';
 import 'stickman_animator.dart'; // Import the new file
 
-/// True when a hit lands on a Shield Bearer's shield.
+/// Half-width of a Shield Bearer's shield arc, matching the arc that is drawn.
+const double kShieldArcHalfWidth = pi / 3; // 120 degrees of cover in total
+
+/// True when a hit lands inside the shield arc of an enemy facing
+/// [facingAngle] (radians, screen space).
 ///
-/// [towardsPlayer] points from the enemy to the player (enemies always face the
-/// player); [knockbackDir] points from the attacker towards the enemy, which is
-/// how every damage source passes it. A frontal hit therefore travels *against*
-/// the facing direction, so the dot product is negative.
-bool isBlockedByShield(Vector2 towardsPlayer, Vector2 knockbackDir) {
-  final Vector2 facing = towardsPlayer.safeNormalized();
+/// [knockbackDir] points from the attacker towards the enemy -- that is how
+/// every damage source passes it -- so the attacker sits in the *opposite*
+/// direction as seen from the enemy.
+///
+/// The facing angle must be the enemy's own lagging facing, never a direction
+/// recomputed towards the player: an enemy that turns instantly is always
+/// facing its attacker, so it would block every hit and be unkillable.
+bool isBlockedByShield(
+  double facingAngle,
+  Vector2 knockbackDir, {
+  double arcHalfWidth = kShieldArcHalfWidth,
+}) {
   final Vector2 incoming = knockbackDir.safeNormalized();
-  if (facing.isZero() || incoming.isZero()) return false;
-  return facing.dot(incoming) < 0;
+  if (incoming.isZero()) return false;
+
+  // Where the attacker is, as seen from the enemy.
+  final double attackerAngle = atan2(-incoming.y, -incoming.x);
+  double diff = attackerAngle - facingAngle;
+  while (diff > pi) {
+    diff -= 2 * pi;
+  }
+  while (diff < -pi) {
+    diff += 2 * pi;
+  }
+  return diff.abs() <= arcHalfWidth;
 }
 
 /// Shared RNG. Constructing a `Random()` per frame (camera shake) or per call
@@ -1393,6 +1413,19 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
   // Kamikaze pulse timer
   double _pulseTimer = 0.0;
 
+  /// Shield Bearer facing, in radians. It turns towards the player at a
+  /// limited rate so the shield can actually be flanked.
+  double _shieldFacing = 0.0;
+  static const double _shieldTurnRate = 2.2; // radians per second
+
+  /// Blocks the shield absorbs before it shatters. A shield that never breaks
+  /// makes the enemy unkillable for a player who cannot get behind it.
+  int shieldHp = 3;
+  static const int shieldMaxHp = 3;
+
+  bool get hasShield =>
+      modifier == EnemyModifier.shieldBearer && shieldHp > 0;
+
   // NEW: Animator
   late StickmanAnimator _animator;
 
@@ -1455,6 +1488,11 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
 
     // Set default animation
     _animator.play("idle");
+
+    final Vector2 toPlayer = game.player.position - position;
+    if (toPlayer.length > 1) {
+      _shieldFacing = atan2(toPlayer.y, toPlayer.x);
+    }
   }
 
   /// Per-frame bookkeeping every enemy type needs: component update, damage
@@ -1464,6 +1502,7 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
     super.update(dt);
     if (_invulnerableTimer > 0) _invulnerableTimer -= dt;
     if (modifier == EnemyModifier.kamikaze) _pulseTimer += dt;
+    if (hasShield) _turnShield(dt);
 
     // ... Regen logic ...
     if (modifier == EnemyModifier.regen && health < _maxHealth && health > 0) {
@@ -1473,6 +1512,24 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
             health++;
         }
     }
+  }
+
+  /// Turns the shield towards the player, but only so fast. The lag is the
+  /// opening the player dashes through.
+  void _turnShield(double dt) {
+    final Vector2 toPlayer = game.player.position - position;
+    if (toPlayer.length <= 1) return;
+
+    final double target = atan2(toPlayer.y, toPlayer.x);
+    double diff = target - _shieldFacing;
+    while (diff > pi) {
+      diff -= 2 * pi;
+    }
+    while (diff < -pi) {
+      diff += 2 * pi;
+    }
+    final double step = _shieldTurnRate * dt;
+    _shieldFacing += diff.clamp(-step, step);
   }
 
   /// Chooses the attack / run / idle clip and advances the animator.
@@ -1610,17 +1667,26 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
       {Vector2? knockbackDir, double invulnerability = 0.5}) {
     if (health <= 0 || _invulnerableTimer > 0) return;
     
-    // Shield Bearer: Block damage from the front. See isBlockedByShield --
-    // the old test had the sign inverted and only ever blocked hits from
-    // behind.
-    if (modifier == EnemyModifier.shieldBearer && knockbackDir != null) {
-      final Vector2 toPlayer = game.player.position - position;
-      if (toPlayer.length > 1 && isBlockedByShield(toPlayer, knockbackDir)) {
-        // Blocked! Play block effect
-        game.world.add(DamageText(0, position.clone() + Vector2(0, -30)));
-        SoundService.instance.playDamage(); // Reuse sound for block
-        return; // No damage taken
+    // Shield Bearer: the shield covers a 120 degree arc that turns towards the
+    // player at a limited rate, so it can be flanked, and it shatters after
+    // a few blocks so the enemy is killable even head-on.
+    if (hasShield &&
+        knockbackDir != null &&
+        isBlockedByShield(_shieldFacing, knockbackDir)) {
+      shieldHp--;
+      game.world.add(DamageText(0, position.clone() + Vector2(0, -30)));
+      SoundService.instance.playDamage(); // Reuse sound for block
+
+      if (shieldHp <= 0) {
+        // Shield shatters: it is a normal enemy from here on.
+        game.world.add(VisualEffects.createExplosion(position, scale: 0.8));
+        SoundService.instance.playExplosion();
       }
+
+      // A blocked hit still shoves it, which helps open up a flank.
+      _knockbackVelocity = knockbackDir.safeNormalized() * 120.0;
+      _invulnerableTimer = invulnerability;
+      return; // No damage taken
     }
     
     game.world.add(DamageText(amount, position.clone() + Vector2(0, -30)));
@@ -1681,45 +1747,43 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
     // Render Procedural Enemy
     _animator.render(canvas, Vector2(size.x / 2, size.y / 2 + 5), size.y);
 
-    // Shield Bearer: Draw shield in front
-    if (modifier == EnemyModifier.shieldBearer) {
-      // Calculate facing direction
-      Vector2 toPlayer = game.player.position - position;
-      if (toPlayer.length > 1) {
-        Vector2 facingDir = toPlayer.safeNormalized();
-        double angle = atan2(facingDir.y, facingDir.x);
-        
-        canvas.save();
-        canvas.translate(size.x / 2, size.y / 2);
-        canvas.rotate(angle);
-        
-        // Draw shield arc
-        final shieldPaint = Paint()
-          ..color = Colors.blue.withValues(alpha: 0.6)
+    // Shield Bearer: draw the shield along its own (lagging) facing, so the
+    // gap the player has to attack through is visible.
+    if (hasShield) {
+      // Fades as the shield takes blocks, telegraphing that it is about to go.
+      final double wear = shieldHp / shieldMaxHp;
+
+      canvas.save();
+      canvas.translate(size.x / 2, size.y / 2);
+      canvas.rotate(_shieldFacing);
+
+      const Rect arcBounds = Rect.fromLTWH(-15, -20, 30, 40);
+      const double sweep = kShieldArcHalfWidth * 2;
+
+      // Shield fill
+      canvas.drawArc(
+        arcBounds,
+        -kShieldArcHalfWidth,
+        sweep,
+        false,
+        Paint()
+          ..color = Colors.blue.withValues(alpha: 0.2 * wear)
+          ..style = PaintingStyle.fill,
+      );
+
+      // Shield arc
+      canvas.drawArc(
+        arcBounds,
+        -kShieldArcHalfWidth,
+        sweep,
+        false,
+        Paint()
+          ..color = Colors.blue.withValues(alpha: 0.3 + 0.5 * wear)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 4;
-        canvas.drawArc(
-          const Rect.fromLTWH(-15, -20, 30, 40),
-          -pi / 3,
-          2 * pi / 3,
-          false,
-          shieldPaint
-        );
-        
-        // Shield fill
-        final shieldFill = Paint()
-          ..color = Colors.blue.withValues(alpha: 0.2)
-          ..style = PaintingStyle.fill;
-        canvas.drawArc(
-          const Rect.fromLTWH(-15, -20, 30, 40),
-          -pi / 3,
-          2 * pi / 3,
-          false,
-          shieldFill
-        );
-        
-        canvas.restore();
-      }
+          ..strokeWidth = 4,
+      );
+
+      canvas.restore();
     }
 
     // Flash
