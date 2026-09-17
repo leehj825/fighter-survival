@@ -72,12 +72,9 @@ class CustomStickmanPainter extends CustomPainter {
         double z1 = point.x * sin(rotY) + point.z * cos(rotY);
         double y1 = point.y;
         // Rotate X (Pitch)
-        double y2 = y1 * cos(rotX) - z1 * sin(rotX);
-        double z2 = y1 * sin(rotX) + z1 * cos(rotX);
-        double x2 = x1;
-
-        x = x2;
-        y = y2;
+        // Only the projected x/y are needed; the rotated depth is discarded.
+        x = x1;
+        y = y1 * cos(rotX) - z1 * sin(rotX);
         break;
     }
 
@@ -180,7 +177,7 @@ class CustomStickmanPainter extends CustomPainter {
        axisDir = v.Vector3(0, 0, 1);
      }
 
-     final length = 1000.0;
+     const double length = 1000.0;
      final start3D = pos - axisDir * length;
      final end3D = pos + axisDir * length;
 

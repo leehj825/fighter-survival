@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:math';
-import 'dart:ui';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'package:stickman_3d/stickman_3d.dart' hide CameraView, StickmanPainter;
@@ -94,6 +93,9 @@ class StickmanAnimator {
     }
   }
 
+  /// Names already reported as missing, so the warning is logged once.
+  static final Set<String> _reportedMissingClips = <String>{};
+
   void play(String animationName) {
     // Check if clip exists, but also handle case where it might not
     if (_clips.containsKey(animationName)) {
@@ -116,10 +118,13 @@ class StickmanAnimator {
       controller.currentFrameIndex = (animationName == "magic") ? 50 : 0;
       controller.setMode(EditorMode.animate);
       controller.isPlaying = true;
-      debugPrint('Playing animation: $animationName');
     } else {
-      // Debug: Log which animation is missing
-      debugPrint('Animation "$animationName" not found in clips. Available: ${_clips.keys.toList()}');
+      // Log each missing clip once. play() is called from update(), so logging
+      // unconditionally here floods the console every frame, per entity.
+      if (_reportedMissingClips.add(animationName)) {
+        debugPrint(
+            'Animation "$animationName" not found in clips. Available: ${_clips.keys.toList()}');
+      }
     }
   }
 
@@ -140,8 +145,12 @@ class StickmanAnimator {
       // Smooth Rotation (Lerp)
       // Shortest angle interpolation
       double diff = target - _facingAngle;
-      while (diff < -pi) diff += 2 * pi;
-      while (diff > pi) diff -= 2 * pi;
+      while (diff < -pi) {
+        diff += 2 * pi;
+      }
+      while (diff > pi) {
+        diff -= 2 * pi;
+      }
 
       _facingAngle += diff * (dt * 10); // Turn speed 10
     }
@@ -187,12 +196,15 @@ class StickmanAnimator {
     }
   }
 
+  /// Pseudo-3D Bird's Eye projection painter. Every argument is constant for
+  /// the lifetime of this animator, so it is built once instead of per frame.
+  CustomStickmanPainter? _painter;
+
   void render(Canvas canvas, Vector2 position, double height, {bool isDashing = false}) {
     canvas.save();
     canvas.translate(position.x, position.y);
 
-    // Render with Pseudo-3D Bird's Eye Projection using CustomStickmanPainter (No Grid)
-    final painter = CustomStickmanPainter(
+    _painter ??= CustomStickmanPainter(
       controller: controller,
       color: color,
       cameraView: CameraView.free,
@@ -202,7 +214,7 @@ class StickmanAnimator {
       cameraHeightOffset: 0.0,
     );
 
-    painter.paint(canvas, Size.zero);
+    _painter!.paint(canvas, Size.zero);
     canvas.restore();
   }
 }

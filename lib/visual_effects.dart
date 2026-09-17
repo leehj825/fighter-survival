@@ -1,12 +1,13 @@
 import 'dart:math';
-import 'dart:ui';
 import 'package:flame/components.dart';
 import 'package:flame/particles.dart';
 import 'package:flutter/material.dart';
 
 class VisualEffects {
+  static final Random _rng = Random();
+
   static ParticleSystemComponent createExplosion(Vector2 position, {double scale = 1.0}) {
-    final Random rng = Random();
+    final Random rng = _rng;
     return ParticleSystemComponent(
       particle: Particle.generate(
         count: (20 * scale).toInt(),
@@ -31,49 +32,12 @@ class VisualEffects {
     return _DashTrailComponent(position, angle);
   }
 
-  static PositionComponent createShockwave(Vector2 position) {
-    return _ShockwaveComponent(position);
-  }
-}
-
-class _ShockwaveComponent extends PositionComponent {
-  final double _lifespan = 0.5;
-  double _timer = 0.0;
-  final Paint _paint = Paint()
-    ..color = Colors.cyanAccent
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 4.0;
-
-  _ShockwaveComponent(Vector2 pos) {
-    position = pos;
-    size = Vector2.all(300); // Max radius approx 150
-    anchor = Anchor.center;
-  }
-
-  @override
-  void update(double dt) {
-    super.update(dt);
-    _timer += dt;
-    if (_timer >= _lifespan) {
-      removeFromParent();
-    } else {
-      double opacity = (1.0 - (_timer / _lifespan)).clamp(0.0, 1.0);
-      _paint.color = Colors.cyanAccent.withOpacity(opacity);
-    }
-  }
-
-  @override
-  void render(Canvas canvas) {
-    double progress = _timer / _lifespan;
-    double currentRadius = (size.x / 2) * progress;
-    canvas.drawCircle(Offset(size.x / 2, size.y / 2), currentRadius, _paint);
-  }
 }
 
 class _DashTrailComponent extends PositionComponent {
   final double _lifespan = 0.3;
   double _timer = 0.0;
-  final Paint _paint = Paint()..color = Colors.yellow.withOpacity(0.5);
+  final Paint _paint = Paint()..color = Colors.yellow.withValues(alpha: 0.5);
 
   _DashTrailComponent(Vector2 pos, double angle) {
     position = pos;
@@ -90,7 +54,7 @@ class _DashTrailComponent extends PositionComponent {
       removeFromParent();
     } else {
       // Fade out
-      _paint.color = Colors.yellow.withOpacity(0.5 * (1 - _timer / _lifespan));
+      _paint.color = Colors.yellow.withValues(alpha: 0.5 * (1 - _timer / _lifespan));
     }
   }
 

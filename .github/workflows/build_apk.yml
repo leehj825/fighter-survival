@@ -30,6 +30,12 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      - name: Analyze
+        run: flutter analyze --fatal-warnings
+
+      - name: Test
+        run: flutter test
+
       # Adding flutter create . to ensure android/ directory exists if not committed
       # This is a safety measure for this specific prototype environment
       - name: Create scaffolding
@@ -49,6 +55,15 @@ jobs:
           if [ -f android/build.gradle ]; then
              sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.22"/g' android/build.gradle
           fi
+
+      - name: Build debug APK
+        run: flutter build apk --debug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
 
       - name: Build APK
         run: flutter build apk --release

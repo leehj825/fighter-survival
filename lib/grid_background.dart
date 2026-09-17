@@ -2,7 +2,7 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'game.dart'; // Changed from main.dart to game.dart
 
-class GridBackground extends PositionComponent with HasGameRef<RpgGame>, HasVisibility {
+class GridBackground extends PositionComponent with HasGameReference<RpgGame>, HasVisibility {
   final Paint _gridPaint = Paint()
     ..color = const Color(0xFF333333)
     ..style = PaintingStyle.stroke
@@ -15,7 +15,7 @@ class GridBackground extends PositionComponent with HasGameRef<RpgGame>, HasVisi
     if (!isVisible) return;
 
     // Determine visible area from camera
-    final Rect visibleRect = gameRef.cameraComponent.visibleWorldRect;
+    final Rect visibleRect = game.cameraComponent.visibleWorldRect;
 
     // Expand slightly to avoid flickering at edges
     final double left = (visibleRect.left ~/ 50) * 50.0 - 50;

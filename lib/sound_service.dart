@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'config.dart';
 
@@ -26,20 +27,15 @@ class SoundService {
   static const int _maxSfxPlayers = 8;
   int _poolIndex = 0;
 
-  bool _isMusicEnabled = true;
-  bool _isSoundEnabled = true;
+  final bool _isMusicEnabled = true;
+  final bool _isSoundEnabled = true;
   bool _isMusicOperationInProgress = false; // Prevent concurrent music operations
-  double _musicVolume = AppConfig.menuMusicVolume; // Base music volume (used for menu music)
-  double _gameBackgroundVolume = AppConfig.gameBackgroundMusicVolume; // Lower volume for game background music
-  double _soundVolume = 1.0; // Player sound volume (0.0 to 1.0)
+  final double _musicVolume = AppConfig.menuMusicVolume; // Base music volume
   double _soundVolumeMultiplier = AppConfig.soundVolumeMultiplier; // Overall sound effects multiplier (player adjustable)
   double _musicVolumeMultiplier = AppConfig.musicVolumeMultiplier; // Overall music multiplier (player adjustable)
   String? _currentMusicPath; // Track what music is currently playing
   DateTime? _lastMusicStartTime; // Track when music was last started (to prevent immediate stops)
-  Timer? _fadeTimer; // Timer for monitoring position and handling fade
-  double? _targetVolume; // Target volume for current track (for fade in/out)
-  Duration? _trackDuration; // Duration of current track
-  bool _isFading = false; // Track if we're currently fading
+  int _fadeGeneration = 0; // Cancels an in-flight fade when volume changes
   bool _wasPlayingBeforePause = false; // Track if music was playing before app was paused
   Completer<void>? _settingsLoadCompleter; // Completer to track when settings are loaded
 
@@ -110,9 +106,9 @@ class SoundService {
       // the intended AudioContext (mixing with other apps / no focus).
       _backgroundMusicPlayer = AudioPlayer();
 
-      print('✅ Audio context configured to mix with other apps and players created');
+      debugPrint('✅ Audio context configured to mix with other apps and players created');
     } catch (e) {
-      print('⚠️ Error configuring audio context: $e');
+      debugPrint('⚠️ Error configuring audio context: $e');
       // Ensure players are created even if context setup fails
       try { _backgroundMusicPlayer = AudioPlayer(); } catch(_) {}
     }
@@ -135,19 +131,14 @@ class SoundService {
         _musicVolumeMultiplier = savedMusicVolume.clamp(0.0, 1.0);
       }
 
-      print('🔊 Loaded volume settings: Sound=${_soundVolumeMultiplier.toStringAsFixed(2)}, Music=${_musicVolumeMultiplier.toStringAsFixed(2)}');
+      debugPrint('🔊 Loaded volume settings: Sound=${_soundVolumeMultiplier.toStringAsFixed(2)}, Music=${_musicVolumeMultiplier.toStringAsFixed(2)}');
 
       // If music is already playing, update its volume with the loaded settings
       if (_currentMusicPath != null) {
-        final baseVolume = _currentMusicPath!.contains('game_background') ? _gameBackgroundVolume : _musicVolume;
-        final curvedMultiplier = _applyVolumeCurve(_musicVolumeMultiplier);
-        final finalVolume = (baseVolume * curvedMultiplier).clamp(0.0, 1.0);
-        _backgroundMusicPlayer.setVolume(finalVolume);
-        _targetVolume = finalVolume; // Update target volume for fade
-        print('🔊 Updated playing music volume to: ${finalVolume.toStringAsFixed(2)}');
+        setMusicVolumeMultiplier(_musicVolumeMultiplier);
       }
     } catch (e) {
-      print('⚠️ Error loading volume settings: $e');
+      debugPrint('⚠️ Error loading volume settings: $e');
     } finally {
       // Complete the completer to signal that settings are loaded (or failed)
       if (_settingsLoadCompleter != null && !_settingsLoadCompleter!.isCompleted) {
@@ -163,7 +154,7 @@ class SoundService {
       try {
         await _settingsLoadCompleter!.future.timeout(const Duration(seconds: 2));
       } catch (e) {
-        print("⚠️ Settings load timed out, proceeding with defaults.");
+        debugPrint("⚠️ Settings load timed out, proceeding with defaults.");
       }
     }
   }
@@ -174,9 +165,9 @@ class SoundService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble('sound_volume_multiplier', _soundVolumeMultiplier);
       await prefs.setDouble('music_volume_multiplier', _musicVolumeMultiplier);
-      print('💾 Saved volume settings: Sound=${_soundVolumeMultiplier.toStringAsFixed(2)}, Music=${_musicVolumeMultiplier.toStringAsFixed(2)}');
+      debugPrint('💾 Saved volume settings: Sound=${_soundVolumeMultiplier.toStringAsFixed(2)}, Music=${_musicVolumeMultiplier.toStringAsFixed(2)}');
     } catch (e) {
-      print('⚠️ Error saving volume settings: $e');
+      debugPrint('⚠️ Error saving volume settings: $e');
     }
   }
 
@@ -192,7 +183,7 @@ class SoundService {
   /// Play background music (looping)
   Future<void> playBackgroundMusic(String assetPath) async {
     if (!_isMusicEnabled) {
-      print('🔇 Music is disabled, skipping: $assetPath');
+      debugPrint('🔇 Music is disabled, skipping: $assetPath');
       return;
     }
 
@@ -216,17 +207,16 @@ class SoundService {
         // Check if it is actually playing
         bool isPlaying = false;
         try {
-          final state = await _backgroundMusicPlayer.state;
-          isPlaying = state == PlayerState.playing;
+          isPlaying = _backgroundMusicPlayer.state == PlayerState.playing;
         } catch (_) {}
 
         if (isPlaying) {
-          print('🎵 Music already playing: $assetPath');
+          debugPrint('🎵 Music already playing: $assetPath');
           _isMusicOperationInProgress = false;
           return; // EXIT EARLY - DO NOT RESTART
         }
 
-        print('🔄 Music path matches current but stopped, restarting: $assetPath');
+        debugPrint('🔄 Music path matches current but stopped, restarting: $assetPath');
         await _restartMusic(assetPath);
         _isMusicOperationInProgress = false;
         return;
@@ -234,13 +224,13 @@ class SoundService {
 
       // Stop any currently playing music first (only if different)
       if (_currentMusicPath != null && _currentMusicPath != assetPath) {
-        await stopBackgroundMusic();
+        await stopBackgroundMusic(forceStop: true);
       }
 
       await _restartMusic(assetPath);
       _isMusicOperationInProgress = false;
-    } catch (e, stackTrace) {
-      print('❌ Error playing background music ($assetPath): $e');
+    } catch (e) {
+      debugPrint('❌ Error playing background music ($assetPath): $e');
       _currentMusicPath = null; // Reset on error
       _isMusicOperationInProgress = false;
     }
@@ -248,17 +238,9 @@ class SoundService {
 
   /// Internal method to start/restart music from beginning
   Future<void> _restartMusic(String assetPath) async {
-    // Stop any existing fade timer
-    _fadeTimer?.cancel();
-    _fadeTimer = null;
-    _isFading = false;
-
-    // Determine base volume
-    final baseVolume = _musicVolume; // We only have one volume setting type for now essentially
-    // Apply non-linear volume curve
+    // Determine base volume, then apply the non-linear volume curve
     final curvedMultiplier = _applyVolumeCurve(_musicVolumeMultiplier);
-    final volume = (baseVolume * curvedMultiplier).clamp(0.0, 1.0);
-    _targetVolume = volume;
+    final volume = (_musicVolume * curvedMultiplier).clamp(0.0, 1.0);
 
     _currentMusicPath = assetPath;
     _lastMusicStartTime = DateTime.now();
@@ -272,11 +254,11 @@ class SoundService {
       await _backgroundMusicPlayer.setReleaseMode(ReleaseMode.loop);
       await _backgroundMusicPlayer.setVolume(0.0);
 
-      print('🎵 Playing background music: $assetPath (target volume: $volume)');
+      debugPrint('🎵 Playing background music: $assetPath (target volume: $volume)');
 
       await _backgroundMusicPlayer.play(AssetSource(assetPath));
     } catch (e) {
-      print('⚠️ Error starting playback: $e');
+      debugPrint('⚠️ Error starting playback: $e');
       _currentMusicPath = null;
       rethrow;
     }
@@ -287,25 +269,17 @@ class SoundService {
     _wasPlayingBeforePause = true;
   }
 
-  Future<void> _fadeOut(Duration duration, double targetVolume) async {
-    const steps = 20;
-    final stepDuration = duration ~/ steps;
-    final volumeStep = targetVolume / steps;
-
-    for (int i = steps; i >= 0; i--) {
-      if (_currentMusicPath == null) break;
-      await _backgroundMusicPlayer.setVolume(volumeStep * i);
-      await Future.delayed(stepDuration);
-    }
-  }
-
+  /// Ramps the volume up. Tagged with a generation so that a volume change or
+  /// a new track abandons an in-flight fade instead of fighting it over
+  /// setVolume.
   Future<void> _fadeIn(Duration duration, double targetVolume) async {
+    final int generation = ++_fadeGeneration;
     const steps = 20;
     final stepDuration = duration ~/ steps;
     final volumeStep = targetVolume / steps;
 
     for (int i = 0; i <= steps; i++) {
-      if (_currentMusicPath == null) break;
+      if (_currentMusicPath == null || _fadeGeneration != generation) return;
       await _backgroundMusicPlayer.setVolume(volumeStep * i);
       await Future.delayed(stepDuration);
     }
@@ -322,9 +296,7 @@ class SoundService {
         }
 
         _isMusicOperationInProgress = true;
-        _fadeTimer?.cancel();
-        _fadeTimer = null;
-        _isFading = false;
+        _fadeGeneration++; // Abandon any in-flight fade
 
         try {
           await _backgroundMusicPlayer.stop();
@@ -343,11 +315,11 @@ class SoundService {
   Future<void> pauseBackgroundMusic() async {
     try {
       if (_currentMusicPath != null) {
-        final state = await _backgroundMusicPlayer.state;
-        _wasPlayingBeforePause = (state == PlayerState.playing);
+        _wasPlayingBeforePause =
+            _backgroundMusicPlayer.state == PlayerState.playing;
 
         if (_wasPlayingBeforePause) {
-          _fadeTimer?.cancel();
+          _fadeGeneration++; // Abandon any in-flight fade
           await _backgroundMusicPlayer.pause(); // Pause instead of stop to allow resume
         }
       }
@@ -381,7 +353,7 @@ class SoundService {
       await player.setVolume(volume);
       await player.play(AssetSource(assetName));
     } catch (e) {
-      print("Error playing SFX $assetName: $e");
+      debugPrint("Error playing SFX $assetName: $e");
     }
   }
 
@@ -419,10 +391,10 @@ class SoundService {
     _saveVolumeSettings();
 
     if (_currentMusicPath != null) {
+      _fadeGeneration++; // A fade in flight would overwrite this immediately
       final curvedMultiplier = _applyVolumeCurve(_musicVolumeMultiplier);
       final finalVolume = (_musicVolume * curvedMultiplier).clamp(0.0, 1.0);
       _backgroundMusicPlayer.setVolume(finalVolume);
-      _targetVolume = finalVolume;
     }
   }
 

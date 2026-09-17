@@ -67,4 +67,13 @@ flutter build macos
 
 ## Configuration
 
-*   **Dash Sensitivity**: Adjust `dashVelocityThreshold` in `lib/game.dart` (default: 2500.0).
+*   **Dash Sensitivity**: Adjust `dashVelocityThreshold` in `lib/game.dart` (default: 1000.0).
+
+## Development
+
+Run the analyzer and the test suite before pushing; CI runs both:
+
+```bash
+flutter analyze
+flutter test
+```

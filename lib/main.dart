@@ -124,7 +124,7 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
           backgroundColor: Colors.blueGrey.shade900,
           body: Center(
             child: SingleChildScrollView(
-              child: Container(
+              child: SizedBox(
                 width: double.infinity,
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -227,12 +227,14 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
       listener: BannerAdListener(
         onAdLoaded: (ad) {
           debugPrint('Game BannerAd loaded');
+          if (!mounted) return; // Ad load can resolve after the route is popped
           setState(() { _isBannerAdReady = true; _adLoadError = null; });
         },
         onAdFailedToLoad: (ad, error) {
           debugPrint('Game BannerAd failed to load: ${error.message}');
-          setState(() { _isBannerAdReady = false; _adLoadError = error.message; });
           ad.dispose();
+          if (!mounted) return;
+          setState(() { _isBannerAdReady = false; _adLoadError = error.message; });
         },
       ),
     );
@@ -260,7 +262,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvoked: (didPop) {
+      onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         if (!_game.gameOver && !_game.paused) {
            _game.paused = true;
@@ -280,7 +282,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
                 height: AdSize.banner.height.toDouble(),
                 alignment: Alignment.center,
                 color: Colors.black26,
-                child: Text('Ad failed: $_adLoadError', style: TextStyle(color: Colors.white70)),
+                child: Text('Ad failed: $_adLoadError', style: const TextStyle(color: Colors.white70)),
               ),
             Expanded(
               child: GameWidget(
@@ -290,7 +292,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
                     return Center(
                       child: Container(
                         padding: const EdgeInsets.all(20),
-                        color: Colors.black.withOpacity(0.8),
+                        color: Colors.black.withValues(alpha: 0.8),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -299,6 +301,12 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
                               style: TextStyle(color: Colors.red, fontSize: 32, fontWeight: FontWeight.bold),
                             ),
                             const SizedBox(height: 20),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                              onPressed: game.restartRun,
+                              child: const Text("Restart"),
+                            ),
+                            const SizedBox(height: 10),
                             ElevatedButton(
                               onPressed: () {
                                 Navigator.of(context).pop();
@@ -314,7 +322,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
                     return Center(
                       child: Container(
                         padding: const EdgeInsets.all(20),
-                        color: Colors.black.withOpacity(0.8),
+                        color: Colors.black.withValues(alpha: 0.8),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [

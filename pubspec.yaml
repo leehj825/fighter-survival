@@ -11,6 +11,8 @@ dependencies:
     sdk: flutter
   flame: ^1.16.0
   shared_preferences: ^2.2.0
+  # Used directly by the stickman painter/animator for Vector3/Matrix3.
+  vector_math: ^2.1.0
   audioplayers: ^6.0.0
   google_mobile_ads: ^7.0.0
   stickman_3d:
@@ -21,7 +23,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^2.0.0
+  flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.11.0
 
 flutter_icons:
