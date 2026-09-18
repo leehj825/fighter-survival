@@ -145,6 +145,16 @@ class _MainMenuState extends State<MainMenu> with WidgetsBindingObserver {
                       style: TextStyle(
                           fontSize: buttonTextSize * 0.8, color: Colors.amber),
                     ),
+                    if (GameData().hasRecords) ...[
+                      SizedBox(height: paddingV / 4),
+                      Text(
+                        "Best Wave: ${GameData().bestWave}  |  Best Kills: ${GameData().bestKills}  |  Best Combo: ${GameData().bestCombo}x",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            fontSize: buttonTextSize * 0.45,
+                            color: Colors.white70),
+                      ),
+                    ],
                     SizedBox(height: paddingV * 2),
                     if (GameData().hasSavedRun) ...[
                       _buildButton("RESUME", Colors.orange, buttonTextSize,
@@ -293,34 +303,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
                     return _LevelUpOverlay(game: game);
                   },
                   'GameOver': (context, RpgGame game) {
-                    return Center(
-                      child: Container(
-                        padding: const EdgeInsets.all(20),
-                        color: Colors.black.withValues(alpha: 0.8),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text(
-                              "GAME OVER",
-                              style: TextStyle(color: Colors.red, fontSize: 32, fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 20),
-                            ElevatedButton(
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                              onPressed: game.restartRun,
-                              child: const Text("Restart"),
-                            ),
-                            const SizedBox(height: 10),
-                            ElevatedButton(
-                              onPressed: () {
-                                Navigator.of(context).pop();
-                              },
-                              child: const Text("Return to Menu"),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
+                    return _RunSummaryOverlay(game: game);
                   },
                   'PauseMenu': (context, RpgGame game) {
                     return Center(
@@ -417,6 +400,25 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   _lastSoundTime = now;
                 }
               },
+            ),
+
+            const SizedBox(height: 16),
+
+            // Haptics
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("Haptics", style: TextStyle(color: Colors.white70)),
+                Switch(
+                  value: GameData().hapticsEnabled,
+                  activeTrackColor: Colors.cyanAccent,
+                  onChanged: (val) {
+                    setState(() {
+                      GameData().setHapticsEnabled(val);
+                    });
+                  },
+                ),
+              ],
             ),
 
             const SizedBox(height: 20),
@@ -655,6 +657,102 @@ class _LevelUpOverlay extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Shown when a run ends: what the run added up to, and whether it beat any
+/// records. Wraps in a ListenableBuilder on GameData because recordRun's
+/// SharedPreferences write (and its "new best" result) completes slightly
+/// after this overlay first appears.
+class _RunSummaryOverlay extends StatelessWidget {
+  const _RunSummaryOverlay({required this.game});
+
+  final RpgGame game;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: GameData(),
+      builder: (context, _) {
+        final records = game.lastRunRecords;
+        final int gemsEarned = GameData().gemsEarned(game.runGems);
+
+        return Center(
+          child: Container(
+            margin: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.88),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.redAccent, width: 2),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  "SIGNAL LOST",
+                  style: TextStyle(
+                      color: Colors.red,
+                      fontSize: 30,
+                      fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                _statRow("Wave Reached", "${game.wave}",
+                    isRecord: records?.newBestWave ?? false),
+                _statRow("Kills", "${game.killCount}",
+                    isRecord: records?.newBestKills ?? false),
+                _statRow("Best Combo", "${game.maxCombo}x",
+                    isRecord: records?.newBestCombo ?? false),
+                _statRow("Gems Earned", "$gemsEarned"),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                  onPressed: game.restartRun,
+                  child: const Text("Restart"),
+                ),
+                const SizedBox(height: 10),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text("Return to Menu"),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _statRow(String label, String value, {bool isRecord = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 130,
+            child: Text(label,
+                style: const TextStyle(color: Colors.white70, fontSize: 14)),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: isRecord ? Colors.amber : Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          if (isRecord) ...[
+            const SizedBox(width: 8),
+            const Text("NEW BEST!",
+                style: TextStyle(
+                    color: Colors.amber,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold)),
+          ],
+        ],
       ),
     );
   }

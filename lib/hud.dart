@@ -42,6 +42,19 @@ class Hud extends PositionComponent with HasGameReference<RpgGame> {
     textRenderer: _warningHidden,
   );
 
+  final TextComponent comboText = TextComponent(
+    text: '',
+    anchor: Anchor.topRight,
+    textRenderer: TextPaint(
+      style: const TextStyle(
+        color: Colors.orangeAccent,
+        fontSize: 22,
+        fontWeight: FontWeight.bold,
+        shadows: [Shadow(blurRadius: 3, color: Colors.black)],
+      ),
+    ),
+  );
+
   final Paint _barBgPaint = Paint()..color = Colors.grey.withValues(alpha: 0.5);
   final Paint _barFillPaint = Paint()..color = Colors.cyanAccent;
   final Paint _hpBarFillPaint = Paint()..color = Colors.green;
@@ -60,6 +73,11 @@ class Hud extends PositionComponent with HasGameReference<RpgGame> {
 
   String _lastScoreText = '';
 
+  // A brief scale-pop every time the combo climbs, purely cosmetic.
+  int _lastShownCombo = 0;
+  double _comboPulse = 0.0;
+  static const double _comboPulseDuration = 0.18;
+
   Hud() : super(priority: 1000); // Higher priority to ensure on top
 
   @override
@@ -67,6 +85,7 @@ class Hud extends PositionComponent with HasGameReference<RpgGame> {
     add(scoreText);
     add(storyText);
     add(bossWarningText);
+    add(comboText);
   }
 
   @override
@@ -74,6 +93,7 @@ class Hud extends PositionComponent with HasGameReference<RpgGame> {
     super.onGameResize(size);
     storyText.position = Vector2(size.x / 2, 80); // Moved to top, under bars
     bossWarningText.position = size / 2;
+    comboText.position = Vector2(size.x - 20, 20);
   }
 
   @override
@@ -148,6 +168,25 @@ class Hud extends PositionComponent with HasGameReference<RpgGame> {
     if (game.gameOver) {
       _storyTimer = 0.0;
       storyText.text = 'SIGNAL LOST.';
+    }
+
+    _updateCombo(dt);
+  }
+
+  void _updateCombo(double dt) {
+    final int combo = game.combo;
+    if (combo != _lastShownCombo) {
+      if (combo > _lastShownCombo) _comboPulse = _comboPulseDuration;
+      _lastShownCombo = combo;
+      comboText.text = combo >= 2 ? '${combo}x COMBO' : '';
+    }
+
+    if (_comboPulse > 0) {
+      _comboPulse -= dt;
+      final double t = (_comboPulse / _comboPulseDuration).clamp(0.0, 1.0);
+      comboText.scale = Vector2.all(1.0 + t * 0.4);
+    } else {
+      comboText.scale = Vector2.all(1.0);
     }
   }
 

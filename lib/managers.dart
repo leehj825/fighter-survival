@@ -47,6 +47,21 @@ enum Unlock {
   final int cost;
 }
 
+/// Which records a finished run beat.
+class RunRecords {
+  const RunRecords({
+    this.newBestWave = false,
+    this.newBestKills = false,
+    this.newBestCombo = false,
+  });
+
+  final bool newBestWave;
+  final bool newBestKills;
+  final bool newBestCombo;
+
+  bool get any => newBestWave || newBestKills || newBestCombo;
+}
+
 class GameData extends ChangeNotifier {
   static final GameData _instance = GameData._internal();
   factory GameData() => _instance;
@@ -156,17 +171,67 @@ class GameData extends ChangeNotifier {
   bool get unlockMagic => has(Unlock.magic);
   bool get unlockRevive => has(Unlock.revive);
 
+  // --- Records ---
+  //
+  // killCount used to be incremented and then thrown away: nothing recorded
+  // how a run went, so there was no reason to start another one.
+
+  int get bestWave => _prefs.getInt('bestWave') ?? 0;
+  int get bestKills => _prefs.getInt('bestKills') ?? 0;
+  int get bestCombo => _prefs.getInt('bestCombo') ?? 0;
+  int get totalRuns => _prefs.getInt('totalRuns') ?? 0;
+  bool get hasRecords => totalRuns > 0;
+
+  /// Stores a finished run and reports which records it beat.
+  Future<RunRecords> recordRun({
+    required int wave,
+    required int kills,
+    required int combo,
+  }) async {
+    final records = RunRecords(
+      newBestWave: wave > bestWave,
+      newBestKills: kills > bestKills,
+      newBestCombo: combo > bestCombo,
+    );
+
+    if (records.newBestWave) await _prefs.setInt('bestWave', wave);
+    if (records.newBestKills) await _prefs.setInt('bestKills', kills);
+    if (records.newBestCombo) await _prefs.setInt('bestCombo', combo);
+    await _prefs.setInt('totalRuns', totalRuns + 1);
+
+    notifyListeners();
+    return records;
+  }
+
+  // --- Haptics ---
+
+  bool get hapticsEnabled => _prefs.getBool('hapticsEnabled') ?? true;
+
+  Future<void> setHapticsEnabled(bool enabled) async {
+    await _prefs.setBool('hapticsEnabled', enabled);
+    notifyListeners();
+  }
+
   // --- Session Persistence ---
 
   bool get hasSavedRun => _prefs.containsKey('savedWave');
 
   Future<void> saveRunState(
-      int wave, int level, int xp, double damageMult, int health) async {
+    int wave,
+    int level,
+    int xp,
+    double damageMult,
+    int health, {
+    List<String> boons = const <String>[],
+  }) async {
     await _prefs.setInt('savedWave', wave);
     await _prefs.setInt('savedLevel', level);
     await _prefs.setInt('savedXp', xp);
     await _prefs.setDouble('savedDamageMult', damageMult);
     await _prefs.setInt('savedHealth', health);
+    // Boons are the main in-run progression, so resuming without them threw
+    // away everything the player had chosen.
+    await _prefs.setStringList('savedBoons', boons);
     notifyListeners();
   }
 
@@ -176,6 +241,7 @@ class GameData extends ChangeNotifier {
     await _prefs.remove('savedXp');
     await _prefs.remove('savedDamageMult');
     await _prefs.remove('savedHealth');
+    await _prefs.remove('savedBoons');
     notifyListeners();
   }
 
@@ -184,6 +250,8 @@ class GameData extends ChangeNotifier {
   int get savedXp => _prefs.getInt('savedXp') ?? 0;
   double get savedDamageMult => _prefs.getDouble('savedDamageMult') ?? 1.0;
   int get savedHealth => _prefs.getInt('savedHealth') ?? 100;
+  List<String> get savedBoons =>
+      _prefs.getStringList('savedBoons') ?? const <String>[];
 
   void addGems(int amount) {
     totalGems += amount;
@@ -194,6 +262,14 @@ class GameData extends ChangeNotifier {
     totalGems = 0;
     _levels.clear();
     _unlocks.clear();
+    for (final key in const <String>[
+      'bestWave',
+      'bestKills',
+      'bestCombo',
+      'totalRuns',
+    ]) {
+      await _prefs.remove(key);
+    }
     await save();
   }
 }

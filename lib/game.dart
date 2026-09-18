@@ -6,6 +6,7 @@ import 'package:flame/input.dart'; // Added to fix TapDetector not found
 import 'package:flutter/material.dart' hide Draggable;
 
 import 'balance.dart';
+import 'haptics.dart';
 import 'hud.dart';
 import 'managers.dart';
 import 'visual_effects.dart';
@@ -190,6 +191,50 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
   // Run Session Data
   int runGems = 0;
 
+  // --- Combo ---
+  //
+  // Purely a feel/score element: it does not change damage or drops. Kills
+  // within [_comboWindow] of each other keep the counter climbing; standing
+  // still or missing lets it lapse.
+  int combo = 0;
+  int maxCombo = 0;
+  double _comboTimer = 0.0;
+  static const double _comboWindow = 2.2;
+
+  /// Which records the run just ended beat, for the summary screen.
+  RunRecords? lastRunRecords;
+
+  // --- Hit-stop ---
+  //
+  // A few frames of near-total freeze on a satisfying hit. Implemented as a
+  // dt scale rather than `paused`, so it composes with the level-up and
+  // pause overlays instead of fighting them, and needs no wall-clock timer.
+  double _hitStopTimer = 0.0;
+
+  void hitStop(double seconds) {
+    if (seconds > _hitStopTimer) _hitStopTimer = seconds;
+  }
+
+  /// Called on every enemy kill. Drives the combo counter and a beat of
+  /// hit-stop and haptic feedback scaled to how big the kill was.
+  void registerKill({bool isElite = false, bool isBoss = false}) {
+    killCount++;
+    combo++;
+    if (combo > maxCombo) maxCombo = combo;
+    _comboTimer = _comboWindow;
+
+    if (isBoss) {
+      hitStop(0.09);
+      Haptics.heavy();
+    } else if (isElite) {
+      hitStop(0.06);
+      Haptics.medium();
+    } else {
+      hitStop(0.035);
+      Haptics.light();
+    }
+  }
+
   // Story Data
   final Map<int, String> storyLog = {
     1: "SIMULATION INITIALIZED.\nSURVIVE THE SWARM.",
@@ -256,7 +301,24 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     final GameData data = GameData();
     final bool resuming = resumeGame && data.hasSavedRun;
 
-    player = Player(restoreHealth: resuming ? data.savedHealth : null);
+    // Boons (max HP, dash cooldown, ...) touch fields that onLoad
+    // initializes, so they are replayed inside Player.onLoad() itself --
+    // the same reason restoreHealth is a constructor argument rather than a
+    // field poked from out here afterwards. Awaiting the player's own mount
+    // from within this onLoad() would deadlock: world.add(player) only
+    // queues the mount, and Flame cannot process that queue until a game
+    // loop tick runs, which cannot happen until this onLoad() returns.
+    final List<Boon> resumeBoons = resuming
+        ? data.savedBoons
+            .map((name) => Boon.values.asNameMap()[name])
+            .whereType<Boon>()
+            .toList()
+        : const <Boon>[];
+
+    player = Player(
+      restoreHealth: resuming ? data.savedHealth : null,
+      initialBoons: resumeBoons,
+    );
 
     if (resuming) {
       wave = data.savedWave;
@@ -436,6 +498,21 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     // Failsafe: Recover from NaN position to prevent freeze
     if (player.position.x.isNaN || player.position.y.isNaN) {
       player.position = Vector2(0, 0);
+    }
+
+    // Hit-stop: freeze the simulation for a beat by zeroing the dt everything
+    // below sees, while the freeze's own countdown still runs on real time.
+    final double realDt = dt;
+    if (_hitStopTimer > 0) {
+      _hitStopTimer -= realDt;
+      dt = 0.0;
+    }
+
+    // Combo decay runs on real time even during a freeze, so a hit-stop can
+    // never itself be the reason a combo lapses.
+    if (_comboTimer > 0) {
+      _comboTimer -= realDt;
+      if (_comboTimer <= 0) combo = 0;
     }
 
     // Camera Shake Logic
@@ -763,6 +840,11 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     killCount = 0;
     wave = 1;
     runGems = 0;
+    combo = 0;
+    maxCombo = 0;
+    lastRunRecords = null;
+    _comboTimer = 0.0;
+    _hitStopTimer = 0.0;
     _waveTimer = 0.0;
     _shakeTimer = 0.0;
     _shootDirection = null;
@@ -803,6 +885,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
 
   void chooseBoon(Boon boon) {
     player.applyBoon(boon);
+    player.boonsTaken.add(boon);
     pendingBoons = <Boon>[];
     _queuedLevelUps = _queuedLevelUps > 0 ? _queuedLevelUps - 1 : 0;
     overlays.remove('LevelUp');
@@ -827,6 +910,15 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     paused = false;
     GameData().addGems(GameData().gemsEarned(runGems));
     GameData().clearRunState(); // Clear save on death
+    // Fire and forget: recordRun's SharedPreferences writes complete quickly,
+    // and the summary overlay only needs lastRunRecords, not this future.
+    // GameData notifies its listeners once this completes, and the summary
+    // overlay listens for that -- so it always ends up showing the right
+    // badges even though this write finishes after the overlay is shown.
+    GameData()
+        .recordRun(wave: wave, kills: killCount, combo: maxCombo)
+        .then((records) => lastRunRecords = records);
+    Haptics.heavy();
     overlays.add('GameOver');
   }
 
@@ -834,7 +926,14 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     GameData().addGems(GameData().gemsEarned(runGems));
     // Save state for Resume
     if (!gameOver) {
-      GameData().saveRunState(wave, player.level, player.xp, player.damageMult, player.health);
+      GameData().saveRunState(
+        wave,
+        player.level,
+        player.xp,
+        player.damageMult,
+        player.health,
+        boons: player.boonsTaken.map((b) => b.name).toList(),
+      );
     } else {
       GameData().clearRunState();
     }
@@ -936,6 +1035,10 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
   /// Second Wind is once per run.
   bool _reviveUsed = false;
 
+  /// Every boon picked this run, in order taken (duplicates allowed). Used to
+  /// persist and replay the run's progression across Resume.
+  final List<Boon> boonsTaken = <Boon>[];
+
   Vector2 _dashDirection = Vector2.zero();
   double _trailTimer = 0.0;
   static const double _trailInterval = 0.05;
@@ -967,7 +1070,10 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
   /// Health to restore when resuming a saved run; null starts at full health.
   final int? restoreHealth;
 
-  Player({this.restoreHealth})
+  /// Boons to replay when resuming a saved run.
+  final List<Boon> initialBoons;
+
+  Player({this.restoreHealth, this.initialBoons = const <Boon>[]})
       : super(size: Vector2.all(60), anchor: Anchor.center);
 
   @override
@@ -982,6 +1088,17 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
     pickupRadius = data.pickupRadius;
     maxDashCharges = data.dashCharges;
     _dashCharges = maxDashCharges;
+
+    for (final boon in initialBoons) {
+      applyBoon(boon);
+      boonsTaken.add(boon);
+    }
+    // applyBoon(Boon.maxHealth) heals to full as a side effect, which is right
+    // for a live level-up but would undo the restored health here -- reassert
+    // it once every replayed boon has had its say.
+    if (initialBoons.isNotEmpty) {
+      health = (restoreHealth ?? maxHealth).clamp(1, maxHealth);
+    }
 
     // Initialize the animator with the loaded data from GameRef
     _animator = StickmanAnimator(
@@ -1135,6 +1252,8 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
       _dashDirection = Vector2(1, 0);
     }
     
+    Haptics.light();
+
     // Show dash impact effect
     final dashImpact = DashImpactEffect();
     dashImpact.position = size / 2;
@@ -1253,6 +1372,7 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
     regenPerSecond = 0.0;
     _regenAccumulator = 0.0;
     _reviveUsed = false;
+    boonsTaken.clear();
 
     health = maxHealth;
     level = 1;
@@ -1326,6 +1446,7 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
     
     // Apply damage (either not dashing, or dashing but hit by non-melee source)
     SoundService.instance.playDamage();
+    Haptics.medium();
     health -= amount;
     _damageCooldown = 1.0;
     game.cameraShake(2.0);
@@ -1339,6 +1460,8 @@ class Player extends PositionComponent with HasGameReference<RpgGame> {
         _damageCooldown = 2.0;
         game.hud.showStory("SECOND WIND");
         game.cameraShake(5.0);
+        game.hitStop(0.15);
+        Haptics.heavy();
         game.world.add(VisualEffects.createExplosion(position, scale: 4.0));
         SoundService.instance.playLevelUp();
         return;
@@ -1702,7 +1825,7 @@ class Enemy extends PositionComponent with HasGameReference<RpgGame> {
     if (health <= 0) {
       health = 0;
       removeFromParent();
-      game.killCount++;
+      game.registerKill(isElite: isElite, isBoss: isBoss);
       // ... drops ...
       game.world.add(
           XpGem(isBoss ? 200 : (isElite ? 50 : 10))..position = position);
@@ -1804,6 +1927,12 @@ class Boss extends Enemy {
   double _addTimer = 6.0;
   int _phase = -1;
 
+  /// Counts down while a volley is telegraphed but not yet fired. Without
+  /// this the boss's projectiles appeared with no warning at all.
+  double _windupTimer = 0.0;
+  int _pendingVolleyCount = 0;
+  static const double _telegraphDuration = 0.55;
+
   int get phase => _phase < 0 ? 0 : _phase;
 
   @override
@@ -1816,6 +1945,8 @@ class Boss extends Enemy {
       _phase = newPhase;
       if (isEscalation) {
         game.cameraShake(4.0);
+        game.hitStop(0.12);
+        Haptics.heavy();
         game.world.add(VisualEffects.createExplosion(position, scale: 3.0));
         game.hud.showStory(
             newPhase == 2 ? "THE GIANT IS ENRAGED" : "THE GIANT BREAKS FORM");
@@ -1826,7 +1957,10 @@ class Boss extends Enemy {
 
     Vector2 velocity = Vector2.zero();
 
-    if (_knockbackVelocity.length > 5) {
+    if (_windupTimer > 0) {
+      // Rooted while casting: a boss that keeps closing distance mid-telegraph
+      // makes the warning meaningless.
+    } else if (_knockbackVelocity.length > 5) {
       velocity = _knockbackVelocity;
       position.add(velocity * dt);
       _knockbackVelocity.scale(0.9);
@@ -1845,10 +1979,21 @@ class Boss extends Enemy {
     }
 
     if (_phase >= 1) {
-      _volleyTimer -= dt;
-      if (_volleyTimer <= 0) {
-        _volleyTimer = _phase == 2 ? 2.0 : 3.0;
-        _fireVolley(_phase == 2 ? 12 : 8);
+      if (_windupTimer > 0) {
+        _windupTimer -= dt;
+        if (_windupTimer <= 0) {
+          _fireVolley(_pendingVolleyCount);
+          _volleyTimer = _phase == 2 ? 2.0 : 3.0;
+        }
+      } else {
+        _volleyTimer -= dt;
+        if (_volleyTimer <= 0) {
+          // Telegraph before firing: root in place and glow for a beat so the
+          // volley is a dodgeable read, not a surprise.
+          _pendingVolleyCount = _phase == 2 ? 12 : 8;
+          _windupTimer = _telegraphDuration;
+          velocity = Vector2.zero();
+        }
       }
     }
 
@@ -1893,6 +2038,30 @@ class Boss extends Enemy {
       ..color = (_phase == 2 ? Colors.redAccent : Colors.deepOrangeAccent)
           .withValues(alpha: 0.5);
     canvas.drawCircle((size / 2).toOffset(), size.x / 2 - (_phase * 8), aura);
+
+    if (_windupTimer > 0) {
+      // Progress from 0 (just started casting) to 1 (about to fire), so the
+      // ring visibly closes in on the moment of the volley.
+      final double progress = 1.0 - (_windupTimer / _telegraphDuration);
+      final Offset center = (size / 2).toOffset();
+      final double maxRadius = size.x * 1.4;
+
+      canvas.drawCircle(
+        center,
+        maxRadius * (1.0 - progress),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3
+          ..color = Colors.redAccent.withValues(alpha: 0.25 + progress * 0.5),
+      );
+      // A pulsing core makes the telegraph readable even at a glance.
+      final double pulse = (sin(progress * pi * 6).abs());
+      canvas.drawCircle(
+        center,
+        size.x * 0.5 + pulse * 6,
+        Paint()..color = Colors.redAccent.withValues(alpha: 0.15 + progress * 0.25),
+      );
+    }
 
     super.render(canvas);
   }

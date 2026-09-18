@@ -30,6 +30,20 @@ A single-finger Action RPG prototype built with [Flutter](https://flutter.dev) a
     120-degree frontal arc that turns to follow you at a limited rate, so it
     has to be flanked (dashing around it works) -- and the shield shatters
     after three blocks, so it is always killable head-on too.
+*   **Boss telegraph**: a boss roots and glows for half a second before
+    firing a volley, so it is a dodgeable read rather than a surprise.
+
+### Feel
+
+*   **Combo counter**: kills within ~2 seconds of each other keep a combo
+    climbing, shown top-right with a small pop. Cosmetic only — it does not
+    change damage or drops.
+*   **Hit-stop**: a few frames of freeze on a kill, boss phase change, or
+    Second Wind save, scaled to how big the moment was.
+*   **Haptics**: light/medium/heavy feedback on dashing, taking a hit,
+    killing an enemy, and boss phase changes. Toggle in Settings.
+*   **Run records**: best wave, kills and combo persist across runs and show
+    on the main menu; the end-of-run summary flags any that were just beaten.
 
 ## Getting Started
 

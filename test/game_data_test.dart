@@ -165,6 +165,118 @@ void main() {
     });
   });
 
+  group('run records', () {
+    test('start unset', () {
+      final data = GameData();
+      expect(data.hasRecords, isFalse);
+      expect(data.bestWave, 0);
+      expect(data.bestKills, 0);
+      expect(data.bestCombo, 0);
+    });
+
+    test('a first run sets every best and reports it as new', () async {
+      final data = GameData();
+      final records =
+          await data.recordRun(wave: 5, kills: 40, combo: 8);
+
+      expect(records.newBestWave, isTrue);
+      expect(records.newBestKills, isTrue);
+      expect(records.newBestCombo, isTrue);
+      expect(records.any, isTrue);
+      expect(data.hasRecords, isTrue);
+      expect(data.bestWave, 5);
+      expect(data.bestKills, 40);
+      expect(data.bestCombo, 8);
+    });
+
+    test('a worse run does not overwrite a better one', () async {
+      final data = GameData();
+      await data.recordRun(wave: 10, kills: 100, combo: 20);
+
+      final records =
+          await data.recordRun(wave: 3, kills: 10, combo: 2);
+
+      expect(records.any, isFalse);
+      expect(data.bestWave, 10);
+      expect(data.bestKills, 100);
+      expect(data.bestCombo, 20);
+    });
+
+    test('records improve independently', () async {
+      // A run can beat the wave record while falling short on kills/combo.
+      final data = GameData();
+      await data.recordRun(wave: 5, kills: 100, combo: 20);
+
+      final records =
+          await data.recordRun(wave: 12, kills: 30, combo: 5);
+
+      expect(records.newBestWave, isTrue);
+      expect(records.newBestKills, isFalse);
+      expect(records.newBestCombo, isFalse);
+      expect(data.bestWave, 12);
+      expect(data.bestKills, 100, reason: 'the better kill run still stands');
+      expect(data.bestCombo, 20, reason: 'the better combo run still stands');
+    });
+
+    test('resetProgress clears records', () async {
+      final data = GameData();
+      await data.recordRun(wave: 9, kills: 50, combo: 10);
+
+      await data.resetProgress();
+
+      expect(data.hasRecords, isFalse);
+      expect(data.bestWave, 0);
+      expect(data.bestKills, 0);
+      expect(data.bestCombo, 0);
+    });
+  });
+
+  group('haptics setting', () {
+    test('defaults to enabled', () {
+      expect(GameData().hapticsEnabled, isTrue);
+    });
+
+    test('persists across a reload', () async {
+      final data = GameData();
+      await data.setHapticsEnabled(false);
+      data.load();
+      expect(data.hapticsEnabled, isFalse);
+
+      await data.setHapticsEnabled(true);
+      data.load();
+      expect(data.hapticsEnabled, isTrue);
+    });
+  });
+
+  group('run state boons', () {
+    test('default to empty', () {
+      expect(GameData().savedBoons, isEmpty);
+    });
+
+    test('round-trip through a save', () async {
+      final data = GameData();
+      await data.saveRunState(4, 2, 10, 1.2, 80,
+          boons: <String>['damage', 'regen', 'damage']);
+
+      // Regression: boons were saved but never read back, so Resume silently
+      // discarded every boon the player had picked.
+      expect(data.savedBoons, <String>['damage', 'regen', 'damage']);
+    });
+
+    test('default to empty when the run was saved without any', () async {
+      final data = GameData();
+      await data.saveRunState(4, 2, 10, 1.2, 80);
+      expect(data.savedBoons, isEmpty);
+    });
+
+    test('are cleared along with the rest of the run state', () async {
+      final data = GameData();
+      await data.saveRunState(4, 2, 10, 1.2, 80, boons: <String>['damage']);
+      await data.clearRunState();
+      expect(data.savedBoons, isEmpty);
+    });
+  });
+
   group('resetProgress', () {
     test('clears gems, levels and unlocks', () async {
       final data = GameData();

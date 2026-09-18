@@ -254,4 +254,94 @@ void main() {
       expect(enemy.health, 0);
     });
   });
+
+  group('combo and hit-stop', () {
+    testWidgets('kills build a combo that lapses after the window',
+        (tester) async {
+      final game = await bootGame(tester);
+
+      game.registerKill();
+      game.registerKill();
+      game.registerKill();
+      expect(game.combo, 3);
+      expect(game.maxCombo, 3);
+
+      // Let the combo window (2.2s) lapse.
+      await tester.pump(const Duration(milliseconds: 2300));
+      expect(game.combo, 0);
+      expect(game.maxCombo, 3,
+          reason: 'the best combo of the run is remembered');
+    });
+
+    testWidgets(
+        'hit-stop freezes the simulation for a beat without blocking real time',
+        (tester) async {
+      final game = await bootGame(tester);
+      final Vector2 before = game.player.position.clone();
+      game.player.moveDirection = Vector2(1, 0);
+
+      game.hitStop(0.5);
+      await tester.pump(const Duration(milliseconds: 16));
+      // The freeze should hold the world still even though real time passed.
+      expect(game.player.position, before, reason: 'frozen during hit-stop');
+
+      // Let the freeze fully elapse, then advance again -- movement resumes.
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(game.player.position.x, greaterThan(before.x));
+    });
+  });
+
+  testWidgets('onGameOver records the run and reports new bests',
+      (tester) async {
+    final game = await bootGame(tester);
+    game.killCount = 7;
+    game.combo = 3;
+    game.maxCombo = 3;
+    game.wave = 4;
+
+    game.player.takeDamage(9999);
+    // recordRun's SharedPreferences write completes asynchronously; the
+    // overlay is built with a ListenableBuilder on GameData for this reason.
+    await tester.pump();
+
+    expect(game.gameOver, isTrue);
+    expect(game.lastRunRecords, isNotNull);
+    expect(game.lastRunRecords!.newBestWave, isTrue);
+    expect(GameData().bestWave, 4);
+    expect(GameData().bestKills, 7);
+    expect(GameData().bestCombo, 3);
+  });
+
+  testWidgets('boons survive Resume, including the restored health',
+      (tester) async {
+    // Regression: this exact path (Player.onLoad replaying boons after a
+    // resume) previously deadlocked the whole game -- an earlier version of
+    // this fix awaited the player's own mount from inside RpgGame.onLoad(),
+    // which Flame can never resolve before onLoad() itself returns.
+    final game = await bootGame(tester);
+
+    game.player.gainXp(game.player.xpToNextLevel);
+    await tester.pump();
+    expect(game.pendingBoons, isNotEmpty);
+
+    game.chooseBoon(Boon.maxHealth);
+    await tester.pump();
+
+    final int maxHealthWithBoon = game.player.maxHealth;
+    expect(maxHealthWithBoon, greaterThan(100));
+
+    // Take damage so the restored health is a real mid-run value, not just
+    // "full again" -- which the boon's own heal-to-full side effect would
+    // paper over.
+    game.player.takeDamage(20);
+    final int healthBeforeExit = game.player.health;
+    game.exitRun();
+
+    final resumedGame = await bootGame(tester, resume: true);
+
+    expect(resumedGame.player.maxHealth, maxHealthWithBoon);
+    expect(resumedGame.player.health, healthBeforeExit);
+    expect(resumedGame.player.boonsTaken, contains(Boon.maxHealth));
+  });
 }
