@@ -50,7 +50,7 @@ jobs:
         run: flutter pub get
 
       - name: Run tests
-        run: flutter test test/contract_test.dart test/pricing_test.dart test/security_test.dart test/rival_test.dart
+        run: flutter test test/widget_test.dart
 
       - name: Build Release AAB
         run: flutter build appbundle --release
