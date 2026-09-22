@@ -16,6 +16,7 @@ enum AttackType { punch, kick, bow, sword, axe }
 class StickmanAnimator {
   final StickmanController controller;
   final Color color;
+  final double glowSigma; // Neon glow blur radius, 0 = off
 
   AttackType _attackType = AttackType.punch;
   LegacyMotionStrategy? _legacyStrategy;
@@ -26,6 +27,7 @@ class StickmanAnimator {
 
   StickmanAnimator({
     this.color = Colors.white,
+    this.glowSigma = 0.0,
     double scale = 1.0,
     WeaponType weaponType = WeaponType.none,
     AttackType attackType = AttackType.punch,
@@ -195,6 +197,7 @@ class StickmanAnimator {
     final painter = CustomStickmanPainter(
       controller: controller,
       color: color,
+      glowSigma: glowSigma,
       cameraView: CameraView.free,
       viewRotationX: -pi / 6, // 30 degrees pitch (Bird's Eye)
       viewRotationY: 0,       // We rotate the skeleton points manually, so view rotation is 0

@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' as v;
 import 'package:stickman_3d/stickman_3d.dart' hide CameraView, AxisMode;
+import 'visual_effects.dart';
 
 // Axis Mode Enum (Used in Editor too)
 enum AxisMode { none, x, y, z }
@@ -13,6 +14,10 @@ enum CameraView { front, side, top, free }
 class CustomStickmanPainter extends CustomPainter {
   final StickmanController controller;
   final Color color;
+
+  // Neon Glow (blurred underlay drawn beneath the bones). 0 disables it.
+  final double glowSigma;
+  final Color? glowColor; // Defaults to [color]
 
   // View Parameters
   final CameraView cameraView;
@@ -29,6 +34,8 @@ class CustomStickmanPainter extends CustomPainter {
   CustomStickmanPainter({
     required this.controller,
     this.color = Colors.white,
+    this.glowSigma = 0.0,
+    this.glowColor,
     this.cameraView = CameraView.free,
     this.viewRotationX = 0.0,
     this.viewRotationY = 0.0,
@@ -127,29 +134,49 @@ class CustomStickmanPainter extends CustomPainter {
     );
 
     // Recursive Drawing
-    void drawNode(StickmanNode node) {
+    void drawNode(StickmanNode node, Paint bonePaint, Paint headPaint) {
       final start = toScreen(node.position);
 
       // Special Draw for Head Node
       if (node.id == 'head') {
-        canvas.drawCircle(start, headRadius, fillPaint);
+        canvas.drawCircle(start, headRadius, headPaint);
       }
 
       for (var child in node.children) {
          final end = toScreen(child.position);
-         canvas.drawLine(start, end, paint);
-         drawNode(child);
+         canvas.drawLine(start, end, bonePaint);
+         drawNode(child, bonePaint, headPaint);
       }
     }
 
-    // Draw Bones
-    drawNode(skel.root);
+    void drawSkeleton(Paint bonePaint, Paint headPaint) {
+      drawNode(skel.root, bonePaint, headPaint);
 
-    // Legacy Support (if head node missing)
-    if (!skel.nodes.containsKey('head') && skel.nodes.containsKey('neck')) {
-      Offset headCenter = toScreen(skel.neck + v.Vector3(0, -8, 0));
-      canvas.drawCircle(headCenter, headRadius, fillPaint);
+      // Legacy Support (if head node missing)
+      if (!skel.nodes.containsKey('head') && skel.nodes.containsKey('neck')) {
+        Offset headCenter = toScreen(skel.neck + v.Vector3(0, -8, 0));
+        canvas.drawCircle(headCenter, headRadius, headPaint);
+      }
     }
+
+    // Neon Glow Layer: blurred, wider copy of the skeleton underneath
+    if (glowSigma > 0) {
+      final glowPaint = VisualEffects.neonGlowPaint(
+        glowColor ?? color,
+        strokeWidth: strokeWidth,
+        sigma: glowSigma,
+      );
+      final glowHeadPaint = VisualEffects.neonGlowPaint(
+        glowColor ?? color,
+        strokeWidth: strokeWidth,
+        sigma: glowSigma,
+        fill: true,
+      );
+      drawSkeleton(glowPaint, glowHeadPaint);
+    }
+
+    // Draw Bones
+    drawSkeleton(paint, fillPaint);
 
     // --- NEW: Draw Face Direction Indicator ---
     // REMOVED per user request
@@ -218,6 +245,9 @@ class CustomStickmanPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomStickmanPainter oldDelegate) {
     return oldDelegate.cameraView != cameraView ||
+           oldDelegate.color != color ||
+           oldDelegate.glowSigma != glowSigma ||
+           oldDelegate.glowColor != glowColor ||
            oldDelegate.viewRotationX != viewRotationX ||
            oldDelegate.viewRotationY != viewRotationY ||
            oldDelegate.viewZoom != viewZoom ||

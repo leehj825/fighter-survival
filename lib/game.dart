@@ -834,6 +834,14 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
   // NEW: Animator
   late StickmanAnimator _animator;
 
+  // Dust Kick: detect abrupt reversals of movement direction
+  Vector2? _lastMoveDir;
+  double _timeSinceMoved = 0.0;
+  double _dustCooldown = 0.0;
+  static const double _reversalDot = -0.5; // > 120 degree turn
+  static const double _reversalWindow = 0.15; // Max pause that still counts as abrupt
+  static const double _dustCooldownTime = 0.25;
+
   Player() : super(size: Vector2.all(60), anchor: Anchor.center);
 
   @override
@@ -848,6 +856,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     // Initialize the animator with the loaded data from GameRef
     _animator = StickmanAnimator(
       color: Colors.cyanAccent,
+      glowSigma: 6.0, // Neon glow
       scale: 1.2,
       attackType: AttackType.kick,
       weaponType: WeaponType.none,
@@ -870,6 +879,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     if (_currentDashCooldown > 0) _currentDashCooldown -= dt;
     if (_shootCooldown > 0) _shootCooldown -= dt;
     if (_frenzyTimer > 0) _frenzyTimer -= dt;
+    if (_dustCooldown > 0) _dustCooldown -= dt;
+    _timeSinceMoved += dt;
 
     Vector2 velocity = Vector2.zero();
 
@@ -895,6 +906,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     } else if (moveDirection != null && moveDirection != Vector2.zero()) {
       velocity = moveDirection! * _baseSpeed;
       position.add(velocity * dt);
+      _checkDirectionReversal(moveDirection!);
       
       // NEW: Update facing direction when moving
       if (velocity.length > 0) {
@@ -946,6 +958,21 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     );
     // Render facing direction for debug if needed? No, just render animator.
     _animator.render(canvas, Vector2(size.x / 2, size.y / 2 + 10), size.y, isDashing: isDashing);
+  }
+
+  void _checkDirectionReversal(Vector2 moveDir) {
+    final Vector2 dir = moveDir.normalized();
+    final Vector2? last = _lastMoveDir;
+    if (last != null &&
+        _timeSinceMoved <= _reversalWindow &&
+        _dustCooldown <= 0 &&
+        last.dot(dir) < _reversalDot) {
+      // Feet dig in: dust sprays along the old momentum
+      gameRef.world.add(VisualEffects.createDustKick(position + Vector2(0, 20), last));
+      _dustCooldown = _dustCooldownTime;
+    }
+    _lastMoveDir = dir;
+    _timeSinceMoved = 0.0;
   }
 
   // ... Keep existing methods (dash, slash, shoot, gainXp, etc) ...

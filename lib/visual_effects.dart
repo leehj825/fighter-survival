@@ -34,6 +34,66 @@ class VisualEffects {
   static PositionComponent createShockwave(Vector2 position) {
     return _ShockwaveComponent(position);
   }
+
+  /// Blurred stroke (or fill) paint for a neon glow layer. Draw it beneath
+  /// the crisp shape; the wider stroke gives the blur a bright core to bleed.
+  static Paint neonGlowPaint(Color color, {
+    required double strokeWidth,
+    double sigma = 6.0,
+    double opacity = 0.85,
+    bool fill = false,
+  }) {
+    return Paint()
+      ..color = color.withOpacity(opacity)
+      ..style = fill ? PaintingStyle.fill : PaintingStyle.stroke
+      ..strokeWidth = strokeWidth * 2.5
+      ..strokeCap = StrokeCap.round
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, sigma);
+  }
+
+  /// Dust puff kicked up at the feet. [sprayDirection] is where the dust
+  /// flies (e.g. the old movement direction when the player reverses).
+  static ParticleSystemComponent createDustKick(Vector2 position, Vector2 sprayDirection, {int count = 12}) {
+    final Random rng = Random();
+    final Vector2 base = sprayDirection.isZero() ? Vector2(1, 0) : sprayDirection.normalized();
+    final double baseAngle = atan2(base.y, base.x);
+    const double lifespan = 0.45;
+
+    return ParticleSystemComponent(
+      position: position.clone(),
+      particle: Particle.generate(
+        count: count,
+        lifespan: lifespan,
+        generator: (i) {
+          // Fan out +/- ~35 degrees around the spray direction
+          final double angle = baseAngle + (rng.nextDouble() - 0.5) * 1.2;
+          final double speed = 60 + rng.nextDouble() * 90;
+          final Vector2 travel = Vector2(cos(angle), sin(angle)) * (speed * lifespan);
+          final double startRadius = 2.0 + rng.nextDouble() * 2.5;
+          final double lift = 6 + rng.nextDouble() * 10; // Puffs rise a little
+          final Color tint = Color.lerp(
+            const Color(0xFFB8A58C), // Tan
+            const Color(0xFF9E9E9E), // Grey
+            rng.nextDouble(),
+          )!;
+          final Paint paint = Paint();
+
+          return ComputedParticle(
+            renderer: (canvas, particle) {
+              final double t = particle.progress;
+              final double ease = 1 - (1 - t) * (1 - t); // Fast out, drag to a stop
+              paint.color = tint.withOpacity(0.55 * (1 - t));
+              canvas.drawCircle(
+                Offset(travel.x * ease, travel.y * ease - lift * ease),
+                startRadius * (1 + t * 1.5), // Puffs expand as they thin out
+                paint,
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
 }
 
 class _ShockwaveComponent extends PositionComponent {
