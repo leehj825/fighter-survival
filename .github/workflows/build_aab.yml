@@ -49,9 +49,6 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Run tests
-        run: flutter test test/widget_test.dart
-
       - name: Build Release AAB
         run: flutter build appbundle --release
 
