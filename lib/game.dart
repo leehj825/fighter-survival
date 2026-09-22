@@ -413,7 +413,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     // --- Y-SORTING ---
     // Sort components by Y position for depth (2.5D view)
     for (final child in world.children) {
-      if (child is PositionComponent) {
+      if (child is PositionComponent && child is! GridBackground) { // Grid stays at the back
         child.priority = child.position.y.toInt();
       }
     }
@@ -524,7 +524,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
         }
 
         // Check PLAYER DAMAGE Hit (Enemy Melee)
-        if (!player.isDashing && dist < combinedRadius) {
+        if (!player.isDashing && !enemy.isStaggered && dist < combinedRadius) {
           // Elite enemies deal more damage
           int damage = enemy.isElite ? 20 : 10;
           player.takeDamage(damage, fromEnemyMelee: true);
@@ -1366,12 +1366,18 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       } else {
         _knockbackVelocity.setZero();
         
-        // Elite enemies always chase player directly (no roaming)
+        // Elite enemies always chase player directly (no roaming), but stop
+        // at striking distance instead of walking through the player (which
+        // flipped their direction every frame)
         if (isElite) {
-          Vector2 dirToPlayer = (gameRef.player.position - position).safeNormalized();
-          double currentSpeed = _speed * 1.2; // 20% faster than normal
-          velocity = dirToPlayer * currentSpeed;
-          position.add(velocity * dt);
+          final Vector2 toPlayer = gameRef.player.position - position;
+          final double stopDist = (size.x / 2 + gameRef.player.size.x / 2) * 0.85;
+          final double gap = toPlayer.length - stopDist;
+          if (gap > 0) {
+            double currentSpeed = _speed * 1.2; // 20% faster than normal
+            velocity = toPlayer.safeNormalized() * currentSpeed;
+            position.add(velocity * min(dt, gap / currentSpeed)); // Don't overshoot
+          }
         } else {
           // Normal enemies use roaming
           _roamTimer -= dt;
@@ -1396,7 +1402,8 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     // Attack Logic (Melee) - Skip for Kamikaze (they explode instead)
     // Elite enemies have larger attack range
     double attackRange = isElite ? size.x + 30 : size.x + 10;
-    if (modifier != EnemyModifier.kamikaze && distToPlayer < attackRange) {
+    final bool inAttackRange = modifier != EnemyModifier.kamikaze && distToPlayer < attackRange;
+    if (inAttackRange) {
        _animator.isAttacking = true;
        _animator.play("Kicking"); // Use kicking animation
     } else {
@@ -1409,9 +1416,18 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
        }
     }
 
-    // Update Animator with velocity
-    _animator.update(dt, velocity, false);
+    // Update Animator. Face the player while attacking or being knocked back,
+    // otherwise face the movement direction (knockback used to turn enemies
+    // away, so they kicked the wrong way)
+    Vector2 facing = velocity;
+    if (inAttackRange || isStaggered) {
+      facing = (gameRef.player.position - position).safeNormalized() * 100;
+    }
+    _animator.update(dt, facing, false);
   }
+
+  /// True while sliding from a knockback; staggered enemies can't hurt the player.
+  bool get isStaggered => _knockbackVelocity.length > 5;
 
   // ... keep _pickNewTarget and takeDamage ...
   void _pickNewTarget() {
