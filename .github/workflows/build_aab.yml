@@ -1,0 +1,62 @@
+name: Build and Sign Android AAB
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest # (Optional: Change this to ubuntu-24.04 if you want to silence the OS notice)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7 # BUMPED: Fixes Node 20 warning
+
+      - name: Set up Java
+        uses: actions/setup-java@v6 # BUMPED: Fixes Node 20 and setup-java warnings
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Decode Keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: echo $KEYSTORE_B64 | base64 --decode > android/release.jks
+
+      - name: Create key.properties for signing
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          cat << EOF > android/key.properties
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=release.jks
+          EOF
+
+      - name: Clean project
+        run: flutter clean
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test test/contract_test.dart test/pricing_test.dart test/security_test.dart test/rival_test.dart
+
+      - name: Build Release AAB
+        run: flutter build appbundle --release
+
+      - name: Upload AAB Artifact
+        uses: actions/upload-artifact@v7 # BUMPED: Fixes Node 20 warning
+        with:
+          name: release-aab
+          path: build/app/outputs/bundle/release/app-release.aab
