@@ -51,6 +51,77 @@ class VisualEffects {
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, sigma);
   }
 
+  /// Hot streaks flying off a melee impact, biased along [direction] (the
+  /// hit direction). Uses a solid blur so each spark keeps a bright core.
+  static ParticleSystemComponent createSparkBurst(Vector2 position, Vector2 direction, {int count = 10}) {
+    final Random rng = Random();
+    final Vector2 base = direction.isZero() ? Vector2(1, 0) : direction.normalized();
+    final double baseAngle = atan2(base.y, base.x);
+    const double lifespan = 0.25;
+
+    return ParticleSystemComponent(
+      position: position.clone(),
+      particle: Particle.generate(
+        count: count,
+        lifespan: lifespan,
+        generator: (i) {
+          final double angle = baseAngle + (rng.nextDouble() - 0.5) * 1.6; // ~±45°
+          final Vector2 dir = Vector2(cos(angle), sin(angle));
+          final double speed = 250 + rng.nextDouble() * 250;
+          final double streak = 6 + rng.nextDouble() * 8;
+          final Paint paint = Paint()
+            ..strokeWidth = 2
+            ..strokeCap = StrokeCap.round
+            ..maskFilter = const MaskFilter.blur(BlurStyle.solid, 2);
+
+          return ComputedParticle(
+            renderer: (canvas, particle) {
+              final double t = particle.progress;
+              final double travel = speed * lifespan * (1 - (1 - t) * (1 - t)); // Decelerate
+              final Vector2 head = dir * travel;
+              final Vector2 tail = dir * max(0.0, travel - streak * (1 - t));
+              // White-hot to amber as it cools
+              paint.color = Color.lerp(Colors.white, Colors.orangeAccent, t)!.withOpacity(1 - t);
+              canvas.drawLine(tail.toOffset(), head.toOffset(), paint);
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  /// Splash of energy droplets in [color] (enemy "blood"), bursting outward
+  /// and shrinking. [scale] sizes both spread and droplet size.
+  static ParticleSystemComponent createEnergySplash(Vector2 position, Color color, {double scale = 1.0, int count = 14}) {
+    final Random rng = Random();
+    const double lifespan = 0.4;
+    final Color core = Color.lerp(color, Colors.white, 0.35)!.withOpacity(1.0);
+
+    return ParticleSystemComponent(
+      position: position.clone(),
+      particle: Particle.generate(
+        count: (count * scale).round().clamp(4, 40),
+        lifespan: lifespan,
+        generator: (i) {
+          final double angle = rng.nextDouble() * 2 * pi;
+          final Vector2 dir = Vector2(cos(angle), sin(angle));
+          final double reach = (20 + rng.nextDouble() * 40) * scale;
+          final double radius = (1.5 + rng.nextDouble() * 2.5) * scale;
+          final Paint paint = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.solid, 3);
+
+          return ComputedParticle(
+            renderer: (canvas, particle) {
+              final double t = particle.progress;
+              final double ease = 1 - pow(1 - t, 3).toDouble(); // Fast burst, soft stop
+              paint.color = core.withOpacity(0.9 * (1 - t));
+              canvas.drawCircle((dir * reach * ease).toOffset(), radius * (1 - t * 0.7), paint);
+            },
+          );
+        },
+      ),
+    );
+  }
+
   /// Dust puff kicked up at the feet. [sprayDirection] is where the dust
   /// flies (e.g. the old movement direction when the player reverses).
   static ParticleSystemComponent createDustKick(Vector2 position, Vector2 sprayDirection, {int count = 12}) {

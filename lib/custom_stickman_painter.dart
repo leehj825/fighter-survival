@@ -10,6 +10,56 @@ enum AxisMode { none, x, y, z }
 // Camera View Enum
 enum CameraView { front, side, top, free }
 
+/// Two-bone inverse kinematics for stickman limbs (hip->knee->foot,
+/// neck->elbow->hand). Places the middle joint with the law of cosines so
+/// both bones keep their lengths while the end joint reaches for a target.
+class StickmanIK {
+  /// Solves in the plane through [root] and [target] that contains the bend
+  /// hint [pole] (defaults to the current [mid], so knees/elbows keep bending
+  /// the way the animation had them). Writes the result into [mid] and [end].
+  /// Targets out of reach are clamped to full extension.
+  static void solveTwoBone({
+    required v.Vector3 root,
+    required v.Vector3 mid,
+    required v.Vector3 end,
+    required v.Vector3 target,
+    required double upperLength,
+    required double lowerLength,
+    v.Vector3? pole,
+  }) {
+    if (upperLength <= 0 || lowerLength <= 0) return;
+    final v.Vector3 toTarget = target - root;
+    final double rawDist = toTarget.length;
+    if (rawDist < 1e-6) return;
+
+    // Reachable range: fully folded .. fully extended
+    final double dist = rawDist.clamp(
+      (upperLength - lowerLength).abs() + 1e-4,
+      upperLength + lowerLength - 1e-4,
+    );
+
+    // 2D basis of the bend plane: x toward target, y toward the pole
+    final v.Vector3 xAxis = toTarget.scaled(1 / rawDist);
+    final v.Vector3 bend = (pole ?? mid) - root;
+    v.Vector3 yAxis = bend - xAxis * bend.dot(xAxis);
+    if (yAxis.length2 < 1e-8) {
+      // Limb is straight along the target line; pick any perpendicular
+      yAxis = xAxis.cross(v.Vector3(0, 0, 1));
+      if (yAxis.length2 < 1e-8) yAxis = xAxis.cross(v.Vector3(1, 0, 0));
+    }
+    yAxis.normalize();
+
+    // Law of cosines: angle at the root between the target line and upper bone
+    final double cosA = ((upperLength * upperLength + dist * dist - lowerLength * lowerLength) /
+            (2 * upperLength * dist))
+        .clamp(-1.0, 1.0);
+    final double angle = atan2(sqrt(1 - cosA * cosA), cosA);
+
+    mid.setFrom(root + (xAxis * cos(angle) + yAxis * sin(angle)) * upperLength);
+    end.setFrom(root + xAxis * dist);
+  }
+}
+
 /// A modified version of StickmanPainter that does NOT draw a grid.
 class CustomStickmanPainter extends CustomPainter {
   final StickmanController controller;

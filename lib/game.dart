@@ -12,6 +12,7 @@ import 'grid_background.dart';
 import 'hud.dart';
 import 'managers.dart';
 import 'visual_effects.dart';
+import 'obstacle_art.dart';
 import 'sound_service.dart';
 import 'stickman_animator.dart'; // Import the new file
 
@@ -190,6 +191,10 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
   // Impact Feedback State
   final CameraShake _cameraShake = CameraShake();
   final HitStop _hitStop = HitStop();
+  Vector2 _shakeOffset = Vector2.zero();
+
+  /// This frame's camera shake in pixels (the HUD follows a fraction of it).
+  Vector2 get shakeOffset => _shakeOffset;
 
   late World world;
   late CameraComponent cameraComponent;
@@ -205,6 +210,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
 
     // Create World
     world = World();
+    world.add(GridBackground()); // Parallax floor grid
 
     // Initialize Player with Stats from GameData
     player = Player()..anchor = Anchor.center;
@@ -379,6 +385,7 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
 
     // Camera Shake Logic (keeps decaying during hit-stop)
     final Vector2 shake = _cameraShake.update(dt);
+    _shakeOffset = shake;
     if (shake.isZero() || size.x <= 0 || size.y <= 0) {
       cameraComponent.viewfinder.anchor = Anchor.center;
     } else {
@@ -756,37 +763,43 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
 class Obstacle extends PositionComponent {
   final double radius;
   final double height;
-  final Paint _paint = Paint()..color = Colors.grey;
+  late final RockArt? _rock;
+  late final PillarArt? _pillar;
+  double _time = 0.0;
 
-  Obstacle({required this.radius, required this.height}) : super(anchor: Anchor.center, size: Vector2.all(radius * 2));
+  // ~1 in 3 obstacles is a glowing tech pillar; the rest are rocks.
+  Obstacle({required this.radius, required this.height, int? seed}) : super(anchor: Anchor.center, size: Vector2.all(radius * 2)) {
+    final Random rng = Random(seed);
+    final Offset center = (size / 2).toOffset();
+    if (rng.nextDouble() < 0.35) {
+      _rock = null;
+      _pillar = PillarArt(
+        center: center,
+        radius: radius,
+        height: height * 1.2,
+        glow: rng.nextBool() ? Colors.cyanAccent : Colors.purpleAccent,
+      );
+      _time = rng.nextDouble() * 10; // Desync pulses
+    } else {
+      _pillar = null;
+      _rock = RockArt(center: center, radius: radius, height: height, rng: rng);
+    }
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (_pillar != null) _time += dt;
+  }
 
   @override
   void render(Canvas canvas) {
-    // 2.5D Cylinder Render
-    final Offset center = (size / 2).toOffset();
-    final double r = radius;
-    final double h = height;
-
-    // Shadow
-    canvas.drawOval(
-      Rect.fromCenter(center: center, width: width, height: width * 0.6),
-      Paint()..color = Colors.black.withOpacity(0.3)
-    );
-
-    // Body
-    final Offset topCenter = center + Offset(0, -h);
-    final Path bodyPath = Path();
-    bodyPath.moveTo(center.dx - r, center.dy);
-    bodyPath.lineTo(center.dx + r, center.dy);
-    bodyPath.lineTo(topCenter.dx + r, topCenter.dy);
-    bodyPath.lineTo(topCenter.dx - r, topCenter.dy);
-    bodyPath.close();
-    canvas.drawPath(bodyPath, Paint()..color = Colors.grey.shade700);
-
-    // Top
-    canvas.drawCircle(topCenter, r, Paint()..color = Colors.grey.shade400);
-    // Rim
-    canvas.drawCircle(topCenter, r, Paint()..style = PaintingStyle.stroke ..color = Colors.white.withOpacity(0.3));
+    // 2.5D procedural art (see obstacle_art.dart)
+    if (_pillar != null) {
+      _pillar!.render(canvas, 0.5 + 0.5 * sin(_time * 2.5));
+    } else {
+      _rock!.render(canvas);
+    }
   }
 }
 
@@ -823,6 +836,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
   // Animation alternation state
   bool _useRoundKick = true; // Alternate between Round Kick and Roundhouse Kick
+  String _dashClip = "Round Kick";
   bool _useHook = true; // Alternate between Hook and Hook Punch
   
   // Attack state to prevent stacking
@@ -865,6 +879,13 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
 
     // Set default animation
     _animator.play("idle");
+
+    // Frame-synced audio: whoosh exactly when a strike reaches full extension
+    _animator.onFrameEvent = (clipName, event) {
+      if (event == 'impact') {
+        SoundService.instance.playSwing(heavy: clipName.contains('Kick'));
+      }
+    };
 
     // Add Dash Cooldown Bar
     add(DashCooldownBar(this)..position = Vector2(size.x / 2, -10));
@@ -920,8 +941,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     // Determine Animation (base layer; tap punches play on the upper-body
     // layer, so the legs keep running/idling underneath them)
     if (isDashing) {
-      _animator.play(_useRoundKick ? "Round Kick" : "Roundhouse Kick");
-      _useRoundKick = !_useRoundKick;
+      _animator.play(_dashClip); // Chosen once per dash in dash()
     } else if (isSlashing) {
       _animator.play("magic");
     } else if (velocity.length > 5) {
@@ -965,6 +985,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     isDashing = true;
     isSlashing = false; // Reset slash if dashing
     _animator.stopUpperBody(); // Dash kick is full-body
+    _dashClip = _useRoundKick ? "Round Kick" : "Roundhouse Kick";
+    _useRoundKick = !_useRoundKick;
     _dashTimer = _dashDuration;
     // Frenzy halves cooldown
     _currentDashCooldown = dashCooldownMax / (isFrenzyActive ? 2.0 : 1.0);
@@ -1092,7 +1114,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     xpToNextLevel = (xpToNextLevel * 1.5).toInt();
     damageMult += 0.1;
     health = maxHealth;
-    gameRef.hud.showStory("LEVEL UP!");
+    gameRef.hud.showLevelUp(level);
     SoundService.instance.playLevelUp();
     gameRef.world.add(VisualEffects.createExplosion(position));
   }
@@ -1435,6 +1457,13 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     health -= amount;
     gameRef.hitStop();
     if (amount >= heavyHitThreshold) gameRef.cameraShake(0.25);
+    // Impact particles: sparks for directional (melee/area) hits, a small
+    // energy splash for projectile hits
+    if (knockbackDir != null) {
+      gameRef.world.add(VisualEffects.createSparkBurst(position, knockbackDir, count: amount >= heavyHitThreshold ? 14 : 8));
+    } else {
+      gameRef.world.add(VisualEffects.createEnergySplash(position, Colors.cyanAccent, scale: 0.5));
+    }
     // Elite enemies take less knockback and are harder to push away
     if (knockbackDir != null) {
       double knockbackForce = isElite ? 200.0 : 400.0; // Elite takes 50% less knockback
@@ -1457,6 +1486,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       
       SoundService.instance.playExplosion(isLarge: isElite);
       gameRef.world.add(VisualEffects.createExplosion(position));
+      gameRef.world.add(VisualEffects.createEnergySplash(position, _animator.color, scale: isElite ? 2.0 : 1.0));
       gameRef.cameraShake(isElite ? 0.7 : 0.2);
     }
   }
@@ -1960,12 +1990,24 @@ class OrbitalShield extends PositionComponent {
 
 class Barrel extends PositionComponent with HasGameRef<RpgGame> {
   double radius = 25;
-  int health = 3;
+  static const int maxHealth = 3;
+  int health = maxHealth;
+  late final BarrelArt _art = BarrelArt(size.toSize());
+  double _flash = 0.0;
+  double _time = 0.0;
 
   Barrel() : super(anchor: Anchor.center, size: Vector2.all(50));
 
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _time += dt;
+    if (_flash > 0) _flash = max(0.0, _flash - dt * 6);
+  }
+
   void takeDamage() {
     health--;
+    _flash = 1.0;
     if (health <= 0) {
       explode();
     }
@@ -1991,19 +2033,23 @@ class Barrel extends PositionComponent with HasGameRef<RpgGame> {
 
   @override
   void render(Canvas canvas) {
-    // Draw Barrel
-    canvas.drawRect(Rect.fromLTWH(0, 0, width, height), Paint()..color = Colors.brown.shade700);
-    canvas.drawLine(Offset(0, 10), Offset(width, 10), Paint()..color = Colors.black..strokeWidth = 2);
-    canvas.drawLine(Offset(0, height - 10), Offset(width, height - 10), Paint()..color = Colors.black..strokeWidth = 2);
+    // Glows hotter and pulses faster as it takes hits
+    final double damage01 = 1 - health / maxHealth;
+    final double pulse = 0.5 + 0.5 * sin(_time * (3 + damage01 * 9));
+    _art.render(canvas, damage01: damage01, flash: _flash, pulse: pulse);
   }
 }
 
 class SpikeTrap extends PositionComponent with HasGameRef<RpgGame> {
+  late final SpikeTrapArt _art = SpikeTrapArt(size.toSize());
+  double _time = 0.0;
+
   SpikeTrap() : super(anchor: Anchor.center, size: Vector2.all(40));
 
   @override
   void update(double dt) {
     super.update(dt);
+    _time += dt;
     // Player collision
     if (gameRef.player.position.distanceTo(position) < 30) {
        gameRef.player.takeDamage(5, fromEnemyMelee: false); // Trap damage, not melee
@@ -2012,13 +2058,7 @@ class SpikeTrap extends PositionComponent with HasGameRef<RpgGame> {
 
   @override
   void render(Canvas canvas) {
-    canvas.drawRect(Rect.fromLTWH(0, 0, width, height), Paint()..color = Colors.grey.shade800);
-    // Spikes
-    Paint p = Paint()..color = Colors.grey.shade400;
-    canvas.drawCircle(Offset(10, 10), 5, p);
-    canvas.drawCircle(Offset(30, 10), 5, p);
-    canvas.drawCircle(Offset(10, 30), 5, p);
-    canvas.drawCircle(Offset(30, 30), 5, p);
+    _art.render(canvas, 0.5 + 0.5 * sin(_time * 4));
   }
 }
 
