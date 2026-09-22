@@ -917,37 +917,21 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     // Update Animator
     _animator.isAttacking = isSlashing;
 
-    // Check if tap attack animation is actively playing based on our flag
-    bool isTapAttackPlaying = _isTapAttacking;
-    
-    // Don't reset here - let the animation complete fully
-    // The reset timer in tapAttack() will handle it
-
-    // Determine Animation
+    // Determine Animation (base layer; tap punches play on the upper-body
+    // layer, so the legs keep running/idling underneath them)
     if (isDashing) {
       _animator.play(_useRoundKick ? "Round Kick" : "Roundhouse Kick");
       _useRoundKick = !_useRoundKick;
     } else if (isSlashing) {
       _animator.play("magic");
-    } else if (isTapAttackPlaying) {
-      // Do nothing, let the punch play out.
-      // The Reset logic in tapAttack() handles returning to state.
     } else if (velocity.length > 5) {
       _animator.play("running");
     } else {
       _animator.play("idle");
     }
 
-    // SPEED UP PUNCH: If attacking, pass a faster DT to the animator
-    // Note: Animation is already 2.5x faster in stickman_animator.dart (fps * 2.5)
-    // So we apply a moderate additional boost for even faster completion
-    double animDt = dt;
-    if (isTapAttackPlaying) {
-      animDt = dt * 2.0; // 2x additional speed (total ~5x faster than original)
-    }
-
     // Pass velocity to animator for direction calculation (3D facing)
-    _animator.update(animDt, velocity, isDashing);
+    _animator.update(dt, velocity, isDashing);
   }
 
   @override
@@ -980,6 +964,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     if (isDashing || _currentDashCooldown > 0) return;
     isDashing = true;
     isSlashing = false; // Reset slash if dashing
+    _animator.stopUpperBody(); // Dash kick is full-body
     _dashTimer = _dashDuration;
     // Frenzy halves cooldown
     _currentDashCooldown = dashCooldownMax / (isFrenzyActive ? 2.0 : 1.0);
@@ -1003,6 +988,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     
     if (isSlashing || isDashing) return;
     isSlashing = true;
+    _animator.stopUpperBody(); // Magic is full-body
     _animator.isAttacking = true;
     _animator.attackType = AttackType.kick; // Ensure it kicks
 
@@ -1039,9 +1025,10 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     if (_isTapAttacking) return;
     _isTapAttacking = true;
     
-    // Play Animation
+    // Play Animation on the upper body only (legs keep running)
+    // Clip is already 2.5x fps in stickman_animator.dart; 2x more here (~5x total)
     final String animName = _useHook ? "Hook" : "Hook Punch";
-    _animator.play(animName);
+    _animator.playUpperBody(animName, speed: 2.0);
     _useHook = !_useHook;
     _animator.isAttacking = true;
     
