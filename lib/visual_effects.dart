@@ -104,3 +104,67 @@ class _DashTrailComponent extends PositionComponent {
     canvas.drawPath(path, _paint);
   }
 }
+
+/// Hit-stop: briefly freezes gameplay updates to sell the weight of an impact.
+/// The game loop calls [tick] every frame and skips its world update while it
+/// returns true.
+class HitStop {
+  static const double defaultDuration = 0.06; // 60ms
+  // Minimum unfrozen time between freezes, so rapid-fire hits can't
+  // stutter-lock the game.
+  static const double retriggerCooldown = 0.1;
+
+  double _remaining = 0.0;
+  double _cooldown = 0.0;
+
+  bool get isActive => _remaining > 0;
+
+  /// Starts (or extends) a freeze. Overlapping hits in the same frame don't
+  /// stack; the longest requested freeze wins.
+  void trigger([double duration = defaultDuration]) {
+    if (_remaining <= 0 && _cooldown > 0) return;
+    _remaining = max(_remaining, duration);
+  }
+
+  /// Advances the freeze timer by real time. Returns true if this frame
+  /// should be frozen.
+  bool tick(double dt) {
+    if (_remaining > 0) {
+      _remaining -= dt;
+      if (_remaining <= 0) _cooldown = retriggerCooldown;
+      return true;
+    }
+    if (_cooldown > 0) _cooldown -= dt;
+    return false;
+  }
+}
+
+/// Trauma-based camera shake. Impacts add trauma (0..1), which decays
+/// linearly over time; the shake magnitude is trauma squared, so big hits
+/// punch hard and then settle smoothly instead of cutting off abruptly.
+class CameraShake {
+  final double maxOffset; // Pixels at full trauma
+  final double decayPerSecond;
+  final Random _rng = Random();
+
+  double _trauma = 0.0;
+
+  CameraShake({this.maxOffset = 24.0, this.decayPerSecond = 1.6});
+
+  double get trauma => _trauma;
+
+  void addTrauma(double amount) {
+    _trauma = (_trauma + amount).clamp(0.0, 1.0);
+  }
+
+  /// Decays trauma and returns this frame's camera offset in pixels.
+  Vector2 update(double dt) {
+    if (_trauma <= 0) return Vector2.zero();
+    _trauma = max(0.0, _trauma - decayPerSecond * dt);
+    final double magnitude = maxOffset * _trauma * _trauma;
+    return Vector2(
+      (_rng.nextDouble() * 2 - 1) * magnitude,
+      (_rng.nextDouble() * 2 - 1) * magnitude,
+    );
+  }
+}

@@ -187,9 +187,9 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
   // Tweakable Variable for Dash Sensitivity
   static const double dashVelocityThreshold = 1000.0; // Lowered from 2500.0
 
-  // Camera Shake State
-  double _shakeTimer = 0.0;
-  double _shakeIntensity = 0.0;
+  // Impact Feedback State
+  final CameraShake _cameraShake = CameraShake();
+  final HitStop _hitStop = HitStop();
 
   late World world;
   late CameraComponent cameraComponent;
@@ -323,9 +323,14 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
     }
   }
 
-  void cameraShake(double intensity) {
-    _shakeTimer = 0.4;
-    _shakeIntensity = intensity;
+  /// Adds camera trauma (0..1). The shake decays on its own over time.
+  void cameraShake(double trauma) {
+    _cameraShake.addTrauma(trauma);
+  }
+
+  /// Freezes gameplay updates briefly (default 60ms) to emphasize a hit.
+  void hitStop([double duration = HitStop.defaultDuration]) {
+    _hitStop.trigger(duration);
   }
 
   void _spawnWave() {
@@ -372,16 +377,16 @@ class RpgGame extends FlameGame with MultiTouchDragDetector { // Removed TapDete
       player.position = Vector2(0, 0);
     }
 
-    // Camera Shake Logic
-    if (_shakeTimer > 0) {
-      _shakeTimer -= dt;
-      final Random rng = Random();
-      final double offX = (rng.nextDouble() - 0.5) * 0.025 * _shakeIntensity;
-      final double offY = (rng.nextDouble() - 0.5) * 0.025 * _shakeIntensity;
-      cameraComponent.viewfinder.anchor = Anchor(0.5 + offX, 0.5 + offY);
-    } else {
+    // Camera Shake Logic (keeps decaying during hit-stop)
+    final Vector2 shake = _cameraShake.update(dt);
+    if (shake.isZero() || size.x <= 0 || size.y <= 0) {
       cameraComponent.viewfinder.anchor = Anchor.center;
+    } else {
+      cameraComponent.viewfinder.anchor = Anchor(0.5 + shake.x / size.x, 0.5 + shake.y / size.y);
     }
+
+    // Hit-Stop: skip the world update for the freeze duration
+    if (_hitStop.tick(dt)) return;
 
     super.update(dt);
     if (gameOver) return;
@@ -1093,7 +1098,8 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     SoundService.instance.playDamage();
     health -= amount;
     _damageCooldown = 1.0;
-    gameRef.cameraShake(2.0);
+    gameRef.hitStop();
+    gameRef.cameraShake(amount >= 30 ? 0.6 : 0.4);
     gameRef.world.add(DamageText(amount, position, isCrit: true));
     if (health <= 0) {
       health = 0;
@@ -1278,6 +1284,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
           gameRef.player.takeDamage(30, fromEnemyMelee: true);
           takeDamage(9999); // Kill self
           gameRef.world.add(VisualEffects.createExplosion(position, scale: 2.0));
+          gameRef.cameraShake(0.6);
           return; // Exit early since we're dead
         }
       }
@@ -1380,6 +1387,9 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
      _roamTimer = 1.0 + rng.nextDouble() * 2.0;
   }
 
+  // Hits at or above this damage count as heavy and shake the camera
+  static const int heavyHitThreshold = 15;
+
   void takeDamage(int amount, {Vector2? knockbackDir}) {
     if (health <= 0 || _invulnerableTimer > 0) return;
     
@@ -1409,6 +1419,8 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
     
     gameRef.world.add(DamageText(amount, position.clone() + Vector2(0, -30)));
     health -= amount;
+    gameRef.hitStop();
+    if (amount >= heavyHitThreshold) gameRef.cameraShake(0.25);
     // Elite enemies take less knockback and are harder to push away
     if (knockbackDir != null) {
       double knockbackForce = isElite ? 200.0 : 400.0; // Elite takes 50% less knockback
@@ -1431,6 +1443,7 @@ class Enemy extends PositionComponent with HasGameRef<RpgGame> {
       
       SoundService.instance.playExplosion(isLarge: isElite);
       gameRef.world.add(VisualEffects.createExplosion(position));
+      gameRef.cameraShake(isElite ? 0.7 : 0.2);
     }
   }
 
@@ -1626,7 +1639,8 @@ class PowerUp extends PositionComponent with HasGameRef<RpgGame> {
             killed++;
           }
         }
-        gameRef.cameraShake(5.0);
+        gameRef.cameraShake(1.0);
+        gameRef.hitStop(0.1);
         // Flash effect
         gameRef.world.add(VisualEffects.createExplosion(gameRef.player.position, scale: 5.0));
         if (killed > 0) {
@@ -1947,6 +1961,8 @@ class Barrel extends PositionComponent with HasGameRef<RpgGame> {
     if (isRemoved) return;
     removeFromParent();
     gameRef.world.add(VisualEffects.createExplosion(position, scale: 2.0));
+    gameRef.cameraShake(0.7);
+    gameRef.hitStop();
     SoundService.instance.playExplosion(); // Re-using existing sound
 
     // Area Damage
