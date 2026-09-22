@@ -856,7 +856,7 @@ class Player extends PositionComponent with HasGameRef<RpgGame> {
     // Initialize the animator with the loaded data from GameRef
     _animator = StickmanAnimator(
       color: Colors.cyanAccent,
-      glowSigma: 6.0, // Neon glow
+      glowSigma: 2.5, // Subtle neon glow
       scale: 1.2,
       attackType: AttackType.kick,
       weaponType: WeaponType.none,

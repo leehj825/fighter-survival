@@ -39,14 +39,14 @@ class VisualEffects {
   /// the crisp shape; the wider stroke gives the blur a bright core to bleed.
   static Paint neonGlowPaint(Color color, {
     required double strokeWidth,
-    double sigma = 6.0,
-    double opacity = 0.85,
+    double sigma = 3.0,
+    double opacity = 0.4,
     bool fill = false,
   }) {
     return Paint()
       ..color = color.withOpacity(opacity)
       ..style = fill ? PaintingStyle.fill : PaintingStyle.stroke
-      ..strokeWidth = strokeWidth * 2.5
+      ..strokeWidth = strokeWidth * 1.5
       ..strokeCap = StrokeCap.round
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, sigma);
   }
