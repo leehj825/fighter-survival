@@ -367,7 +367,13 @@ class SoundService {
 
   // --- Asset-based SFX (Pooled) ---
 
-  Future<void> _playSound(String assetName, {double volumeMult = 1.0}) async {
+  final math.Random _rng = math.Random();
+
+  /// Random playback rate around 1.0 (e.g. 0.08 -> 0.92..1.08) so repeated
+  /// SFX don't sound identical. Rate shifts pitch in low-latency mode.
+  double _pitchJitter(double amount) => 1.0 + (_rng.nextDouble() * 2 - 1) * amount;
+
+  Future<void> _playSound(String assetName, {double volumeMult = 1.0, double playbackRate = 1.0}) async {
     await _ensureSettingsLoaded();
     if (!_isSoundEnabled) return;
 
@@ -379,6 +385,11 @@ class SoundService {
       // Force stop before reuse to prevent "dead player" state
       await player.stop();
       await player.setVolume(volume);
+      // Always set (pooled players keep their last rate); ignore platforms
+      // that don't support it.
+      try {
+        await player.setPlaybackRate(playbackRate);
+      } catch (_) {}
       await player.play(AssetSource(assetName));
     } catch (e) {
       print("Error playing SFX $assetName: $e");
@@ -391,12 +402,22 @@ class SoundService {
     if (variant == 1) assetName = 'audio/shoot_1.wav';
     if (variant == 2) assetName = 'audio/shoot_2.wav';
 
-    await _playSound(assetName);
+    await _playSound(assetName, playbackRate: _pitchJitter(0.06));
   }
 
   Future<void> playExplosion({bool isLarge = false}) async {
     String assetName = isLarge ? 'audio/explosion_large.wav' : 'audio/explosion.wav';
-    await _playSound(assetName, volumeMult: 0.5);
+    await _playSound(assetName, volumeMult: 0.5, playbackRate: _pitchJitter(0.1));
+  }
+
+  /// Swing/impact whoosh, timed to an attack's impact frame.
+  /// No dedicated asset yet: reuses a shoot sample, pitched down and quiet.
+  Future<void> playSwing({bool heavy = false}) async {
+    await _playSound(
+      'audio/shoot_2.wav',
+      volumeMult: heavy ? 0.45 : 0.3,
+      playbackRate: (heavy ? 0.6 : 0.75) * _pitchJitter(0.08),
+    );
   }
 
   Future<void> playLevelUp() async {
@@ -404,7 +425,7 @@ class SoundService {
   }
 
   Future<void> playDamage() async {
-    await _playSound('audio/damage.wav');
+    await _playSound('audio/damage.wav', playbackRate: _pitchJitter(0.08));
   }
 
   /// Set sound volume multiplier (0.0 to 1.0)

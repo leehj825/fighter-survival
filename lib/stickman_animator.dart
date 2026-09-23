@@ -16,6 +16,7 @@ enum AttackType { punch, kick, bow, sword, axe }
 class StickmanAnimator {
   final StickmanController controller;
   final Color color;
+  final double glowSigma; // Neon glow blur radius, 0 = off
 
   AttackType _attackType = AttackType.punch;
   LegacyMotionStrategy? _legacyStrategy;
@@ -24,8 +25,53 @@ class StickmanAnimator {
   // NEW: Track facing angle manually since Controller ignores it during animation
   double _facingAngle = 0.0;
 
+  // Easing applied between consecutive keyframes (replaces hard frame stepping)
+  static const Curve frameEase = Curves.easeOutQuad;
+
+  // Clip-level time curves: strikes snap out fast, then recover slowly.
+  // Clips not listed play at a constant rate (run/idle cycles, magic, bow).
+  static const Map<String, Curve> clipTimeCurves = {
+    'Hook': Curves.easeOutCubic,
+    'Hook Punch': Curves.easeOutCubic,
+    'Punching': Curves.easeOutCubic,
+    'Kicking': Curves.easeOutCubic,
+    'Side Kick': Curves.easeOutCubic,
+    'Round Kick': Curves.easeOutCubic,
+    'Roundhouse Kick': Curves.easeOutCubic,
+  };
+
+  // Keyframe where each strike reaches full extension (measured from the
+  // .sap data: farthest hand/foot). Fires onFrameEvent(clip, 'impact').
+  static const Map<String, int> impactFrames = {
+    'Hook': 23,
+    'Hook Punch': 26,
+    'Punching': 17,
+    'Kicking': 37,
+    'Side Kick': 21,
+    'Round Kick': 27,
+    'Roundhouse Kick': 29,
+  };
+
+  /// Called when playback (base or upper-body layer) crosses a clip's
+  /// impact frame. Use it to time sounds/effects to the animation.
+  void Function(String clipName, String event)? onFrameEvent;
+  double _basePrevSample = -1.0;
+  double _upperPrevSample = -1.0;
+
+  // --- Upper-Body Overlay Layer ---
+  // Plays a one-shot clip on the torso/arms/head while the base clip
+  // (e.g. running) keeps driving the hips and legs.
+  static const Set<String> upperBodyBones = {'neck', 'head', 'lElbow', 'lHand', 'rElbow', 'rHand'};
+  static const double _upperBlendIn = 0.06; // Seconds
+  static const double _upperBlendOut = 0.12; // Seconds
+  StickmanClip? _upperClip;
+  double _upperFrame = 0.0;
+  double _upperSpeed = 1.0;
+  final StickmanSkeleton _upperPose = StickmanSkeleton();
+
   StickmanAnimator({
     this.color = Colors.white,
+    this.glowSigma = 0.0,
     double scale = 1.0,
     WeaponType weaponType = WeaponType.none,
     AttackType attackType = AttackType.punch,
@@ -53,6 +99,8 @@ class StickmanAnimator {
   set isAttacking(bool value) => controller.isAttacking = value;
   set weaponType(WeaponType value) => controller.weaponType = value;
   bool get isPlaying => controller.isPlaying;
+  bool get isUpperBodyPlaying => _upperClip != null;
+  String? get upperBodyClipName => _upperClip?.name;
 
   void _parseData(String data) {
     try {
@@ -114,6 +162,7 @@ class StickmanAnimator {
       controller.activeClip = _clips[animationName];
       // Start magic animation from frame 50
       controller.currentFrameIndex = (animationName == "magic") ? 50 : 0;
+      _basePrevSample = -1.0;
       controller.setMode(EditorMode.animate);
       controller.isPlaying = true;
       debugPrint('Playing animation: $animationName');
@@ -121,6 +170,137 @@ class StickmanAnimator {
       // Debug: Log which animation is missing
       debugPrint('Animation "$animationName" not found in clips. Available: ${_clips.keys.toList()}');
     }
+  }
+
+  /// Plays [animationName] once on the upper body only, layered over whatever
+  /// the base clip is doing with the legs. Restarts if already playing.
+  /// [speed] scales playback on top of the clip's own fps.
+  void playUpperBody(String animationName, {double speed = 1.0}) {
+    final clip = _clips[animationName];
+    if (clip == null || clip.frameCount < 2) {
+      debugPrint('Upper-body animation "$animationName" not found or too short.');
+      return;
+    }
+    _upperClip = clip;
+    _upperFrame = 0.0;
+    _upperSpeed = speed;
+    _upperPrevSample = -1.0;
+  }
+
+  void stopUpperBody() {
+    _upperClip = null;
+  }
+
+  /// Writes the pose at fractional [frame] of [clip] into [out], easing
+  /// between the two surrounding keyframes with [frameEase].
+  static void _samplePose(StickmanClip clip, double frame, StickmanSkeleton out, {required bool loop}) {
+    final int count = clip.frameCount;
+    if (count == 0) return;
+    final int i = min(max(frame.floor(), 0), count - 1);
+    int next = i + 1;
+    if (next >= count) next = loop ? 0 : count - 1;
+    final double t = frameEase.transform((frame - i).clamp(0.0, 1.0));
+
+    out.lerp(clip.getFrame(i).pose, 1.0); // Full copy of the current keyframe
+    if (next != i && t > 0) {
+      out.lerp(clip.getFrame(next).pose, t);
+    }
+  }
+
+  /// Maps linear playback position [frame] (0..[length]) through the clip's
+  /// time curve, if it has one.
+  static double _remapFrame(StickmanClip clip, double frame, double length) {
+    final curve = clipTimeCurves[clip.name];
+    if (curve == null || length <= 0) return frame;
+    return curve.transform((frame / length).clamp(0.0, 1.0)) * length;
+  }
+
+  /// Fires the impact event if the sampled frame crossed it this update.
+  void _checkFrameEvents(StickmanClip clip, double prev, double current) {
+    final int? impact = impactFrames[clip.name];
+    if (impact == null || onFrameEvent == null || prev < 0) return;
+    final bool crossed = current >= prev
+        ? (prev < impact && impact <= current)
+        : (prev < impact || impact <= current); // Wrapped around (looping)
+    if (crossed) onFrameEvent!(clip.name, 'impact');
+  }
+
+  /// Base layer playback for Animate mode (mirrors the package's looping
+  /// behavior, but with eased interpolation instead of frame stepping).
+  void _updateBaseClip(double dt) {
+    final clip = controller.activeClip!;
+    if (controller.isPlaying && clip.frameCount > 0) {
+      controller.currentFrameIndex += dt * clip.fps;
+      if (controller.currentFrameIndex >= clip.frameCount) {
+        controller.currentFrameIndex %= clip.frameCount; // Loop
+      }
+    }
+    final double sampled = _remapFrame(clip, controller.currentFrameIndex, clip.frameCount.toDouble());
+    _checkFrameEvents(clip, _basePrevSample, sampled);
+    _basePrevSample = sampled;
+    _samplePose(clip, sampled, controller.skeleton, loop: true);
+  }
+
+  /// Blends the upper-body overlay onto the already-posed base skeleton.
+  void _updateUpperBody(double dt) {
+    final clip = _upperClip;
+    if (clip == null) return;
+
+    final double framesPerSecond = clip.fps * _upperSpeed;
+    _upperFrame += dt * framesPerSecond;
+    final double lastFrame = (clip.frameCount - 1).toDouble();
+    if (_upperFrame >= lastFrame || framesPerSecond <= 0) {
+      _upperClip = null; // One-shot finished; base pose shows through
+      return;
+    }
+
+    // Layer weight: ease in at the start, ease out toward the end
+    final double elapsed = _upperFrame / framesPerSecond;
+    final double remaining = (lastFrame - _upperFrame) / framesPerSecond;
+    final double rawWeight = min(elapsed / _upperBlendIn, remaining / _upperBlendOut).clamp(0.0, 1.0);
+    final double weight = Curves.easeOut.transform(rawWeight);
+
+    final double sampled = _remapFrame(clip, _upperFrame, lastFrame);
+    _checkFrameEvents(clip, _upperPrevSample, sampled);
+    _upperPrevSample = sampled;
+    _samplePose(clip, sampled, _upperPose, loop: false);
+
+    // Keep the torso attached to the base hip (clips may carry root motion)
+    final v.Vector3 hipOffset = controller.skeleton.hip - _upperPose.hip;
+    final baseNodes = controller.skeleton.nodes;
+    final overlayNodes = _upperPose.nodes;
+
+    // Arm lengths to hold after blending (blend of base and overlay lengths),
+    // so the position lerp can't visibly shrink the arms mid-transition.
+    final skel = controller.skeleton;
+    double blendLen(v.Vector3 a, v.Vector3 b, v.Vector3 oa, v.Vector3 ob) =>
+        a.distanceTo(b) + (oa.distanceTo(ob) - a.distanceTo(b)) * weight;
+    final double lUpper = blendLen(skel.neck, skel.lElbow, _upperPose.neck, _upperPose.lElbow);
+    final double lLower = blendLen(skel.lElbow, skel.lHand, _upperPose.lElbow, _upperPose.lHand);
+    final double rUpper = blendLen(skel.neck, skel.rElbow, _upperPose.neck, _upperPose.rElbow);
+    final double rLower = blendLen(skel.rElbow, skel.rHand, _upperPose.rElbow, _upperPose.rHand);
+    for (final id in upperBodyBones) {
+      final baseNode = baseNodes[id];
+      final overlayNode = overlayNodes[id];
+      if (baseNode == null || overlayNode == null) continue;
+      final v.Vector3 target = overlayNode.position + hipOffset;
+      final v.Vector3 current = baseNode.position;
+      current.setValues(
+        current.x + (target.x - current.x) * weight,
+        current.y + (target.y - current.y) * weight,
+        current.z + (target.z - current.z) * weight,
+      );
+    }
+
+    // Two-bone IK: keep hands where the blend put them, re-solve elbows
+    StickmanIK.solveTwoBone(
+      root: skel.neck, mid: skel.lElbow, end: skel.lHand,
+      target: skel.lHand.clone(), upperLength: lUpper, lowerLength: lLower,
+    );
+    StickmanIK.solveTwoBone(
+      root: skel.neck, mid: skel.rElbow, end: skel.rHand,
+      target: skel.rHand.clone(), upperLength: rUpper, lowerLength: rLower,
+    );
   }
 
   void stopAnimation() {
@@ -163,7 +343,17 @@ class StickmanAnimator {
     // BUT: "Red Enemy uses procedural punch (attack). But that's stationary".
     // So Legacy movement is likely not critical for running if "Standard Run" clip is used.
 
-    controller.update(dt, 0, 0);
+    // Animate mode is sampled here (eased interpolation + upper-body layer);
+    // pose/legacy mode and ragdoll still go through the controller.
+    final bool sampleClips = controller.mode == EditorMode.animate &&
+        controller.activeClip != null &&
+        controller.state == StickmanState.animating;
+    if (sampleClips) {
+      _updateBaseClip(dt);
+      _updateUpperBody(dt);
+    } else {
+      controller.update(dt, 0, 0);
+    }
 
     // 4. MANUAL ROTATION FIX
     // Apply the rotation to the skeleton points manually
@@ -195,6 +385,7 @@ class StickmanAnimator {
     final painter = CustomStickmanPainter(
       controller: controller,
       color: color,
+      glowSigma: glowSigma,
       cameraView: CameraView.free,
       viewRotationX: -pi / 6, // 30 degrees pitch (Bird's Eye)
       viewRotationY: 0,       // We rotate the skeleton points manually, so view rotation is 0
