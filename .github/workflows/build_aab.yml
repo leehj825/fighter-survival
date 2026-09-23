@@ -28,7 +28,8 @@ jobs:
       - name: Decode Keystore
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
-        run: echo $KEYSTORE_B64 | base64 --decode > android/release.jks
+        # Changed destination from android/release.jks to android/app/release.jks
+        run: echo $KEYSTORE_B64 | base64 --decode > android/app/release.jks
 
       - name: Create key.properties for signing
         env:
