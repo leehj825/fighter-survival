@@ -50,7 +50,7 @@ jobs:
         run: flutter pub get
 
       - name: Build Release AAB
-        run: flutter build appbundle --release
+        run: flutter build appbundle --release --dart-define=BUNDLE_BUILT=true
 
       - name: Upload AAB Artifact
         uses: actions/upload-artifact@v7 # BUMPED: Fixes Node 20 warning
